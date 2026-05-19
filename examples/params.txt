@@ -1,0 +1,7 @@
+# Atom Loading parameters to optimize
+# name                          min      max     init
+green_mot_frequency             47.5     49.0    48.3
+LS_blue_mot_intensity           0.20     0.45    0.38
+green_molasses_intensity        0.05     0.20    0.11
+spin_b_field_z                  0.70     1.00    0.885
+lattice_loading_frequency       48.50    49.50   48.83

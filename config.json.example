@@ -1,0 +1,5 @@
+{
+  "GEMINI_API_KEY": "your-gemini-api-key-here",
+  "MEMORY_DATA_PATH": "C:/Users/radzi/Documents/data_2026_05_18",
+  "EXEC_IMPORT": "import time, os, sys, json, yaml, scipy\nimport numpy as np\nimport matplotlib.pyplot as plt\n"
+}

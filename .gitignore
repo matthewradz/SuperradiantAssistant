@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local config (contains API keys — never commit)
+config.json
+
+# Generated sweep plots
+sweep_*.png
