@@ -102,7 +102,15 @@ def read_shot(path: Path) -> ShotSignal:
     path = Path(path)
     with h5py.File(path, "r") as f:
         cavity = read_results_attrs(f, "cavity_scan_analysis")
-        atom_loading = read_globals_group(f, "Atom Loading")
+
+        atom_loading: Dict[str, Any] = {}
+        all_globals: Dict[str, Any] = {}
+        if "globals" in f:
+            for group_name in f["globals"]:
+                grp = _read_attrs(f[f"globals/{group_name}"])
+                all_globals.update(grp)
+                if group_name == "Atom Loading":
+                    atom_loading = grp
 
         return ShotSignal(
             shot_id=path.stem,
@@ -116,6 +124,7 @@ def read_shot(path: Path) -> ShotSignal:
             chi_square_2=_safe_float(cavity.get("chi_square_2")),
             r_sq_2=_safe_float(cavity.get("r_sq_2")),
             atom_loading_globals=atom_loading,
+            all_globals=all_globals,
         )
 
 

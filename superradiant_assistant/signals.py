@@ -22,9 +22,9 @@ class ShotSignal(BaseModel):
     chi_square_2: Optional[float] = None
     r_sq_2: Optional[float] = None
 
-    # Globals snapshot for the variables we care about
+    # Globals snapshot
     atom_loading_globals: Dict[str, Any] = Field(default_factory=dict)
-    other_globals: Dict[str, Any] = Field(default_factory=dict)
+    all_globals: Dict[str, Any] = Field(default_factory=dict)  # all groups merged
 
     success: bool = True
     notes: str = ""

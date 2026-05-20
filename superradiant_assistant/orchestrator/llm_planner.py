@@ -39,6 +39,17 @@ class LLMPlanner:
             ]
         )
 
+        sweep_context = ""
+        if stage.stage_kind == "sweep" and stage.sweep_param:
+            sweep_context = f"""
+## Sweep info
+This is a SWEEP stage — do NOT ask the user for anything. Always return kind="propose_shot".
+Sweep parameter: {stage.sweep_param}
+Plot ratio: {stage.plot_ratio or stage.target_metric}
+Step systematically through the parameter space. Infer a reasonable range from the knowledge
+base if not specified. Each iteration propose a different value of {stage.sweep_param}.
+"""
+
         user_prompt = f"""
 ## Current stage
 Name: {stage.name}
@@ -47,7 +58,7 @@ Target: {stage.target_metric} {stage.threshold_op} {stage.threshold}
 Sequence: {stage.sequence_file}
 Iteration: {iteration+1} / {stage.max_iterations}
 Best {stage.target_metric} so far: {best}
-
+{sweep_context}
 ## Step history
 {hist_text}
 """.strip()

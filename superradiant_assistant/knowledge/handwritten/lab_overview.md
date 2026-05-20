@@ -17,3 +17,18 @@ This lab runs neutral 171-Yb atoms inside a high-finesse optical cavity for spin
 - The wrapper does NOT modify hardware-control code (sequences, devices).
 - It only chooses values for runmanager globals and decides which existing analysis scripts to apply.
 - All results read by the orchestrator come from HDF5 `results/` and `globals/`.
+
+## Cavity scan metrics per shot (Neta_1..Neta_5)
+In `recycling_on_clock_transition_release_recap_FPGA_yellow_FNC.py` there are 5 exp_cavity.scan() calls:
+- **Neta_1, Neta_2**: from `measure_and_prepare_atoms` (loading check, before cooling)
+- **Neta_3**: after isCool / release_recapture (post-cooling check)
+- **Neta_4**: in recycling loop — BEFORE the clock pulse (yellow_doublepass_switch.go_high/go_low)
+- **Neta_5**: in recycling loop — AFTER the clock pulse
+- **Neta_5/Neta_4**: clock transfer ratio. Off resonance ≈ 1. On resonance ≈ 0.2–0.3 (Lorentzian dip).
+- **delta_duration**: lyse multi-shot grouping variable — selects which shots belong to the same sequence for analysis.
+
+## Clock frequency globals
+- `clock_pi_resonance_frequency`: best estimate of clock resonance (MHz), e.g. 82.46521
+- `clock_pi_resonance_frequency_list`: per-shot swept value (set to a single float when sweeping across shots)
+- Unit conversions: 1 kHz = 0.001 MHz; 250 Hz = 0.00025 MHz; 3 kHz = 0.003 MHz
+- Typical sweep: center ≈ 82.465 MHz, range ±1.5 kHz, step 250 Hz → 13 points

@@ -35,15 +35,18 @@ class OfflineReplayExecutor:
 
     def execute(self, req: ShotRequest) -> ShotSignal:
         self._ensure_loaded()
-        metric = getattr(req, "required_metric", "Neta_2")
+        # For sweeps: need Neta_4 and Neta_5 for ratio. For optimize: need Neta_2.
+        # Use all_globals for distance so sweep params (e.g. clock frequency) are matched.
         candidates = [s for s in self._cache
                       if s.shot_id not in self._used_ids
-                      and s.atom_loading_globals
-                      and getattr(s, metric, None) is not None]
+                      and (s.Neta_4 is not None and s.Neta_5 is not None
+                           or s.Neta_2 is not None)]
         if not candidates:
             raise RuntimeError("No more historical shots available to replay.")
 
-        best = min(candidates, key=lambda s: _distance(req.globals_to_set, s.atom_loading_globals))
+        best = min(candidates,
+                   key=lambda s: _distance(req.globals_to_set,
+                                           {**s.atom_loading_globals, **s.all_globals}))
         self._used_ids.add(best.shot_id)
         return best
 

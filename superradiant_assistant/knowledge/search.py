@@ -4,8 +4,73 @@ Phase 1: title/summary/tag matches weighted 3x over body matches.
 Phase 2: swap in embedding-based cosine similarity.
 """
 from __future__ import annotations
+import re
+from pathlib import Path
 from typing import List, Optional
 from superradiant_assistant.knowledge.loader import Document
+
+
+def extract_function_body(path: str, func_name: str, max_lines: int = 80) -> Optional[str]:
+    """Read the full file and return the source of `func_name` (up to max_lines)."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return None
+
+    # Find the def line
+    start = None
+    indent = None
+    for i, line in enumerate(lines):
+        if re.match(rf'^(\s*)def\s+{re.escape(func_name)}\s*\(', line):
+            start = i
+            indent = len(line) - len(line.lstrip())
+            break
+    if start is None:
+        return None
+
+    # Collect lines until we return to the same or lower indent (end of function)
+    body_lines = [lines[start]]
+    for line in lines[start + 1:]:
+        stripped = line.rstrip()
+        if stripped == "":
+            body_lines.append(line)
+            continue
+        current_indent = len(line) - len(line.lstrip())
+        if current_indent <= indent and stripped:
+            break
+        body_lines.append(line)
+        if len(body_lines) >= max_lines:
+            body_lines.append(f"    # ... [truncated after {max_lines} lines]")
+            break
+
+    return "\n".join(body_lines)
+
+
+def augment_with_function_excerpts(docs: List[Document], query: str) -> List[Document]:
+    """If the query mentions a function name, inject its body into the relevant doc."""
+    # Extract function-like names from query
+    func_names = re.findall(r'\b([a-z][a-z0-9_]+(?:_[a-z0-9]+)+)\b', query.lower())
+    if not func_names:
+        return docs
+
+    augmented = []
+    for doc in docs:
+        if not doc.path.endswith(".py"):
+            augmented.append(doc)
+            continue
+        extra_excerpts = []
+        for fn in func_names:
+            body = extract_function_body(doc.path, fn)
+            if body:
+                extra_excerpts.append(f"\n## Function `{fn}` (full body):\n```python\n{body}\n```")
+        if extra_excerpts:
+            import copy
+            d = copy.copy(doc)
+            d.content = "\n".join(extra_excerpts) + "\n\n" + doc.content
+            augmented.append(d)
+        else:
+            augmented.append(doc)
+    return augmented
 
 
 def search(

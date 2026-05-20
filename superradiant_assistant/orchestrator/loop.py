@@ -20,14 +20,39 @@ def run_loop(
     hooks: Optional[HookManager] = None,
     llm_client=None,
     knowledge=None,
+    executor=None,
 ) -> Dict[str, Any]:
     hooks = hooks or HookManager()
-    executor = OfflineReplayExecutor(data_root)
+    executor = executor or OfflineReplayExecutor(data_root)
     t0 = time.time()
 
     # build planners/coders per stage lazily
     def _make_planner_coder(stage: Stage):
-        params = load_params((repo_root / stage.params_file).resolve())
+        params = []
+        if stage.params_file:
+            params_path = (repo_root / stage.params_file).resolve()
+            if params_path.exists():
+                params = load_params(params_path)
+                print(f"  [params] loaded {len(params)} bounds from {params_path.name}")
+            else:
+                print(f"  [params] {stage.params_file} not found — LLM will infer bounds from context")
+        else:
+            print("  [params] no params file specified — LLM will infer bounds from context")
+
+        # Sweep stages with explicit range: use deterministic coder (no LLM needed)
+        if stage.stage_kind == "sweep" and stage.sweep_param and stage.sweep_range_mhz:
+            from superradiant_assistant.orchestrator.sweep_coder import DeterministicSweepCoder
+            rm_iface = getattr(executor, "runmanager", None)
+            sweep_coder = DeterministicSweepCoder(runmanager=rm_iface)
+            if llm_client is not None and knowledge is not None:
+                from superradiant_assistant.orchestrator.llm_planner import LLMPlanner
+                planner = LLMPlanner(llm_client, knowledge)
+            else:
+                from superradiant_assistant.orchestrator.planner import DeterministicPlanner
+                from superradiant_assistant.optimizers.hill_climb import HillClimbOptimizer
+                planner = DeterministicPlanner(stage, params, HillClimbOptimizer(params, stage.target_metric))
+            return planner, sweep_coder, params
+
         if llm_client is not None and knowledge is not None:
             from superradiant_assistant.orchestrator.llm_planner import LLMPlanner
             from superradiant_assistant.orchestrator.llm_coder import LLMCoder
@@ -51,9 +76,16 @@ def run_loop(
         planner, coder, params = _make_planner_coder(stage)
 
         print(f"\n{'='*70}")
-        print(f"  STAGE: {stage.name}")
+        print(f"  STAGE: {stage.name} ({stage.stage_kind})")
         print(f"  {stage.description}")
-        print(f"  target: {stage.target_metric} {stage.threshold_op} {stage.threshold}")
+        if stage.stage_kind == "sweep":
+            print(f"  sweep: {stage.sweep_param}  |  plot: {stage.plot_ratio or '(none)'}")
+            if stage.sweep_range_mhz and stage.sweep_step_mhz:
+                print(f"  range: {stage.sweep_range_mhz*1000:.2f} kHz  "
+                      f"step: {stage.sweep_step_mhz*1000:.4f} kHz  "
+                      f"points: {stage.max_iterations}")
+        else:
+            print(f"  target: {stage.target_metric} {stage.threshold_op} {stage.threshold}")
         print(f"  max_iter: {stage.max_iterations}")
         print(f"{'='*70}")
 
@@ -72,10 +104,14 @@ def run_loop(
 
             # --- Plan ---
             if hasattr(planner, "plan_next"):
-                if isinstance(planner, _get_llm_planner_type()):
-                    plan = planner.plan_next(stage, history, STATE.to_dict(), it)
-                else:
-                    plan = planner.plan_next(it, history)
+                try:
+                    if isinstance(planner, _get_llm_planner_type()):
+                        plan = planner.plan_next(stage, history, STATE.to_dict(), it)
+                    else:
+                        plan = planner.plan_next(it, history)
+                except Exception as e:
+                    print(f"  [planner] error: {e} — skipping iteration")
+                    continue
             else:
                 break
 
@@ -92,10 +128,14 @@ def run_loop(
                 continue  # re-plan with updated state
 
             # --- Develop ---
-            if isinstance(coder, _get_llm_coder_type()):
-                req = coder.make_shot_request(plan, stage, history, STATE.to_dict())
-            else:
-                req = coder.make_shot_request(plan.suggested_params)
+            try:
+                if hasattr(coder, "make_shot_request") and _coder_takes_plan(coder):
+                    req = coder.make_shot_request(plan, stage, history, STATE.to_dict())
+                else:
+                    req = coder.make_shot_request(plan.suggested_params)
+            except Exception as e:
+                print(f"  [coder] error: {e} — skipping iteration")
+                continue
 
             # --- Before-shot hook ---
             if not hooks.all_true("before_shot", request=req, iteration=it):
@@ -118,13 +158,20 @@ def run_loop(
                 default=None,
             )
 
-            print(
-                f"[{stage.name} iter {it+1:>2}/{stage.max_iterations}] "
-                f"{stage.target_metric}="
-                f"{f'{target_val:.1f}' if target_val is not None else 'None':>6} "
-                f"| best={f'{best_val:.1f}' if best_val is not None else 'None'} "
-                f"| {sig.shot_id[:40]}"
-            )
+            if stage.stage_kind == "sweep":
+                sweep_val = req.globals_to_set.get(stage.sweep_param, "?")
+                print(
+                    f"[{stage.name} iter {it+1:>2}/{stage.max_iterations}] "
+                    f"{stage.sweep_param}={sweep_val} → queued | {sig.shot_id[:35]}"
+                )
+            else:
+                print(
+                    f"[{stage.name} iter {it+1:>2}/{stage.max_iterations}] "
+                    f"{stage.target_metric}="
+                    f"{f'{target_val:.1f}' if target_val is not None else 'None':>6} "
+                    f"| best={f'{best_val:.1f}' if best_val is not None else 'None'} "
+                    f"| {sig.shot_id[:40]}"
+                )
 
             STATE.append_history({
                 "stage": stage.name,
@@ -150,8 +197,14 @@ def run_loop(
             default=None,
         )
         if stage.stage_kind == "sweep":
-            stage.status = "complete"
-            _plot_sweep(stage, history)
+            stage.status = "complete" if history else "failed"
+            if history:
+                n = len(history)
+                print(f"\n  [sweep] {n} shots queued for {stage.sweep_param}")
+                if stage.plot_ratio:
+                    print(f"  [sweep] plotting {stage.plot_ratio} vs {stage.sweep_param} "
+                          f"from replay data...")
+                    _plot_sweep(stage, history)
         else:
             stage.status = "complete" if stop_reason == "target_met" else "failed"
         stage.result = {
@@ -187,12 +240,15 @@ def _plot_sweep(stage, history: List[ShotSignal]) -> None:
 
     xs, ys = [], []
     for sig in history:
-        x = sig.atom_loading_globals.get(stage.sweep_param)
+        # Look in all_globals first (covers non-Atom-Loading params like clock frequency),
+        # then fall back to atom_loading_globals
+        combined = {**sig.atom_loading_globals, **sig.all_globals}
+        x = combined.get(stage.sweep_param)
         if x is None:
             continue
         try:
-            x = float(x)
-        except (TypeError, ValueError):
+            x = float(x) if not isinstance(x, list) else float(x[0])
+        except (TypeError, ValueError, IndexError):
             continue
 
         if stage.plot_ratio and "/" in stage.plot_ratio:
@@ -230,6 +286,17 @@ def _plot_sweep(stage, history: List[ShotSignal]) -> None:
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"[sweep] Plot saved → {out_path.resolve()}")
+
+
+def _coder_takes_plan(coder) -> bool:
+    """True for LLMCoder and DeterministicSweepCoder (both take plan, stage, history, state)."""
+    import inspect
+    try:
+        sig = inspect.signature(coder.make_shot_request)
+        params = list(sig.parameters)
+        return len(params) >= 4 and params[1] == "stage"
+    except Exception:
+        return False
 
 
 # duck-type helpers to avoid circular imports

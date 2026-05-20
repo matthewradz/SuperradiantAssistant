@@ -20,3 +20,4 @@ class HookManager:
         results = self.run(name, **kwargs)
         if not results:
             return True   # no hooks registered → don't block
+        return all(bool(r) for r in results)

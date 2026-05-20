@@ -13,20 +13,30 @@ from superradiant_assistant.config import CONFIG
 from superradiant_assistant.hooks import HookManager
 
 
-def build_hooks(require_confirm: bool = False) -> HookManager:
+def build_hooks(require_confirm: bool = False, live: bool = False) -> HookManager:
     hm = HookManager()
 
     def announce(goal, params, **_):
         print("=" * 70)
         for s in goal.stages:
-            print(f"  stage         : {s.name}")
+            print(f"  stage         : {s.name} ({s.stage_kind})")
             print(f"  description   : {s.description[:70]}")
-            print(f"  target        : {s.target_metric} {s.threshold_op} {s.threshold}")
+            if s.stage_kind == "sweep":
+                print(f"  sweep         : {s.sweep_param}")
+                if s.sweep_range_mhz and s.sweep_step_mhz:
+                    print(f"  range/step    : ±{s.sweep_range_mhz/2*1000:.2f} kHz / "
+                          f"{s.sweep_step_mhz*1000:.4f} kHz → {s.max_iterations} points")
+                if s.plot_ratio:
+                    print(f"  plot          : {s.plot_ratio}  [phase 3: via lyse]")
+            else:
+                print(f"  target        : {s.target_metric} {s.threshold_op} {s.threshold}")
             print(f"  sequence      : {s.sequence_file}")
             print(f"  max_iter      : {s.max_iterations}")
             print()
         print(f"  max_dollars   : ${goal.max_dollars}")
         print(f"  timeout (s)   : {goal.timeout_seconds}")
+        if live:
+            print("  mode          : LIVE (shots queued in BLACS)")
         print("=" * 70)
 
     def confirm_shot(request, iteration, **_):
@@ -34,8 +44,23 @@ def build_hooks(require_confirm: bool = False) -> HookManager:
         ans = input("  Run this shot? [Y/n]: ").strip().lower()
         return ans in ("", "y", "yes")
 
+    def before_queue(request, iteration, **_):
+        print(f"\n  [SAFETY] iter {iteration+1} — about to queue:")
+        for k, v in request.globals_to_set.items():
+            print(f"    {k} = {v}")
+        try:
+            ans = input("  Queue this shot in BLACS? [Y/n]: ").strip().lower()
+        except EOFError:
+            ans = ""
+        proceed = ans not in ("n", "no")
+        if not proceed:
+            print("  Skipping shot.")
+        return proceed
+
     hm.register("before_loop", announce)
-    if require_confirm:
+    if live:
+        hm.register("before_shot", before_queue)
+    elif require_confirm:
         hm.register("before_shot", confirm_shot)
     return hm
 
@@ -61,7 +86,21 @@ def _run_goal(goal, args, llm_client, knowledge):
     goal.max_dollars = args.max_dollars
     goal.max_tokens = args.max_tokens
 
-    hooks = build_hooks(require_confirm=args.confirm)
+    live = getattr(args, "live", False)
+    hooks = build_hooks(require_confirm=args.confirm, live=live)
+
+    executor = None
+    if live:
+        from superradiant_assistant.interfaces.runmanager_iface import RunmanagerInterface
+        from superradiant_assistant.orchestrator.live_executor import LiveExecutor
+        sequence = goal.stages[0].sequence_file if goal.stages else ""
+        rm = RunmanagerInterface(
+            sequence_file=sequence or None,
+            output_folder=str(CONFIG.historical_data_root),
+        )
+        executor = LiveExecutor(CONFIG.historical_data_root, rm)
+        print(f"[live] RunmanagerInterface connected, LiveExecutor ready\n")
+
     summary = run_loop(
         goal=goal,
         data_root=CONFIG.historical_data_root,
@@ -69,6 +108,7 @@ def _run_goal(goal, args, llm_client, knowledge):
         hooks=hooks,
         llm_client=llm_client,
         knowledge=knowledge,
+        executor=executor,
     )
     print()
     print("=" * 70)
@@ -127,8 +167,10 @@ def _run_interactive(args, llm_client, knowledge):
             _run_goal(goal, args, llm_client, knowledge)
             print("\n[Goal complete — ask more questions or state a new goal.]")
         else:
-            # Answer from KB
+            # Answer from KB — augment with function excerpts if code is mentioned
+            from superradiant_assistant.knowledge.search import augment_with_function_excerpts
             docs = search_for_role(knowledge, user_input, role="answer", top_k=6)
+            docs = augment_with_function_excerpts(docs, user_input)
             ans_resp = llm_client.generate(
                 user_input,
                 system=answer_system_instruction(docs),
@@ -146,6 +188,9 @@ def main():
                     help="Use LLM for prompt parsing, planning, and coding")
     ap.add_argument("--confirm", action="store_true",
                     help="Require y/n confirmation before each shot")
+    ap.add_argument("--live", action="store_true",
+                    help="Queue shots in runmanager/BLACS (requires GUIs open); "
+                         "results still come from offline replay")
     ap.add_argument("--max-iters", type=int, default=None,
                     help="Override max iterations per stage")
     ap.add_argument("--max-dollars", type=float, default=100.0)

@@ -13,15 +13,17 @@ class Stage(BaseModel):
     threshold: Optional[float] = None
     threshold_op: ThresholdOp = ">"
     sequence_file: str = ""
-    params_file: str = "examples/params.txt"
+    params_file: Optional[str] = "examples/params.txt"
     max_iterations: int = 50
     status: Literal["pending", "active", "complete", "failed"] = "pending"
     result: Optional[Dict[str, Any]] = None
     notes: str = ""
     # sweep support
     stage_kind: Literal["optimize", "sweep"] = "optimize"
-    sweep_param: Optional[str] = None   # global being swept (e.g. "yellow_doublepass_freq_list")
-    plot_ratio: Optional[str] = None    # e.g. "Neta_5/Neta_4" — plotted on y-axis after sweep
+    sweep_param: Optional[str] = None       # global being swept
+    plot_ratio: Optional[str] = None        # e.g. "Neta_5/Neta_4"
+    sweep_range_mhz: Optional[float] = None # total sweep range in MHz (e.g. 0.003 for 3kHz)
+    sweep_step_mhz: Optional[float] = None  # step size in MHz (e.g. 0.00025 for 250Hz)
 
     def threshold_met(self, value: float) -> bool:
         if self.threshold is None:

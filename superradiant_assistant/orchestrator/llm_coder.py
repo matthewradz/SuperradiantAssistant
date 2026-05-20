@@ -37,28 +37,65 @@ class LLMCoder:
         query = plan.prompt_for_coder or stage.description or stage.target_metric
         docs = search_for_role(self.knowledge, query, role="coder", top_k=5)
 
-        params_lines = "\n".join(
-            f"  {p.name}: range [{p.lo}, {p.hi}], typical {p.init}"
-            for p in self.params
-        )
-
-        best_val = _best_metric(history, stage.target_metric)
-        best_params_text = ""
-        if best_val is not None and history:
-            for s in reversed(history):
-                v = getattr(s, stage.target_metric, None)
-                if v == best_val:
-                    best_params_text = "\n".join(
-                        f"  {p.name} = {s.atom_loading_globals.get(p.name, p.init)}"
-                        for p in self.params
-                    )
-                    break
-
         imports_block = "import numpy as np\nimport json"
-
         system = coder_system_instruction(docs, imports_block, state)
 
-        user_prompt = f"""
+        # Sweep stages: only vary the sweep parameter
+        if stage.stage_kind == "sweep" and stage.sweep_param:
+            sweep_history = []
+            for s in history:
+                val = s.atom_loading_globals.get(stage.sweep_param)
+                metric = getattr(s, stage.target_metric, None)
+                if val is not None:
+                    sweep_history.append(f"  iter {history.index(s)+1}: {stage.sweep_param}={val}, {stage.target_metric}={metric}")
+            history_text = "\n".join(sweep_history) or "  (no shots yet)"
+
+            user_prompt = f"""
+{plan.prompt_for_coder}
+
+This is a SWEEP stage. Set ONLY the parameter being swept.
+Sweep parameter: {stage.sweep_param}
+Plot ratio: {stage.plot_ratio or stage.target_metric}
+Iteration: {len(history)+1} of {stage.max_iterations}
+
+Values swept so far and their results:
+{history_text}
+
+Infer a reasonable next value from the knowledge base (check the current globals value and the
+goal context). State your assumed sweep range in the rationale.
+
+Return ONLY this JSON (no markdown):
+{{
+  "globals_to_set": {{
+    "{stage.sweep_param}": <float_value>
+  }},
+  "rationale": "<value chosen and assumed sweep range>"
+}}
+""".strip()
+
+        else:
+            # Optimize stage: propose all relevant params
+            if self.params:
+                params_lines = "\n".join(
+                    f"  {p.name}: range [{p.lo}, {p.hi}], typical {p.init}"
+                    for p in self.params
+                )
+            else:
+                params_lines = "  (no explicit bounds — infer from knowledge base and state assumptions)"
+
+            best_val = _best_metric(history, stage.target_metric)
+            best_params_text = ""
+            if best_val is not None and history:
+                for s in reversed(history):
+                    v = getattr(s, stage.target_metric, None)
+                    if v == best_val:
+                        best_params_text = "\n".join(
+                            f"  {p.name} = {s.atom_loading_globals.get(p.name, p.init)}"
+                            for p in self.params
+                        )
+                        break
+
+            user_prompt = f"""
 {plan.prompt_for_coder}
 
 Goal: {stage.target_metric} {stage.threshold_op} {stage.threshold}
@@ -72,15 +109,17 @@ Available parameters and bounds:
 {params_lines}
 
 Propose the next set of parameter values as JSON.
-IMPORTANT: all values MUST be within the stated bounds.
+If explicit bounds were provided, values MUST be within them.
+If bounds were NOT provided, infer reasonable values from the knowledge base and goal context,
+and include your assumed range in the rationale so the user can verify.
 
-Return ONLY this JSON (no markdown, no explanation):
+Return ONLY this JSON (no markdown):
 {{
   "globals_to_set": {{
     "<param_name>": <float_value>,
     ...
   }},
-  "rationale": "<one sentence>"
+  "rationale": "<one sentence — state assumed bounds if inferred>"
 }}
 """.strip()
 
