@@ -15,54 +15,80 @@ from superradiant_assistant.knowledge.search import search_for_role
 from superradiant_assistant.llm.client import LLMClient
 
 
-SYSTEM_INSTRUCTION = """You are a research planning assistant for an AMO physics lab.
-Your job is to parse a user's experimental goal into a structured list of stages.
+def _build_system_instruction() -> str:
+    """Build the system instruction dynamically, grounding it in config.json."""
+    from superradiant_assistant.config import CONFIG
 
-Each stage is one logical sub-task, executed in order. For a simple goal like
-"optimize atom loading", there is one stage. For a complex goal like "measure
-clock coherence time with and without fiber noise cancellation", there are
-multiple stages (e.g. stabilize loading, scan clock frequency, Ramsey sweep,
-FNC-off repeat).
+    seq_lines = "\n".join(
+        f"  - {s['file']} | use_case={s['use_case']} | {s['description']}"
+        for s in CONFIG.sequences
+    )
+    analysis_lines = "\n".join(
+        f"  - {s['file']} | use_case={s.get('use_case',[])} | {s['description']}"
+        for s in CONFIG.analysis_scripts
+    )
+    globals_lines = "\n".join(
+        f"  - {g['name']} ({g['type']}) range [{g.get('min','?')} – {g.get('max','?')}]: {g['description']}"
+        for g in CONFIG.experiment_globals
+    )
 
-Return ONLY valid JSON with this schema — no markdown, no explanation:
-{
+    return f"""You are a research planning assistant for an AMO physics lab.
+Parse the user's goal into one or more stages. Use ONLY the sequences, analysis scripts,
+and globals listed below — do not invent others.
+
+## Available sequences
+{seq_lines}
+
+## Available analysis scripts
+{analysis_lines}
+
+## Globals the assistant may edit
+{globals_lines}
+
+## Task types
+- answer    : Q&A / code tracing — no shots needed
+- calibrate : run a Ramsey/calibration sequence, run analysis script, read correction, update a global
+- resonance : sweep a parameter, plot a ratio (e.g. Neta_5/Neta_4) to find a peak/dip
+- optimize  : iterate shots to maximize/minimize a metric above/below a threshold
+
+Return ONLY valid JSON, no markdown:
+{{
   "stages": [
-    {
+    {{
       "name": "<short_snake_case_name>",
-      "description": "<one sentence describing what this stage does>",
-      "target_metric": "<e.g. Neta_2 | Sz | contrast | N_atoms>",
+      "description": "<one sentence>",
+      "task_type": "<answer | calibrate | resonance | optimize>",
+      "sequence_file": "<filename.py from the sequences list, or empty for answer>",
+      "analysis_script": "<filename.py from analysis list, or empty>",
+      "analysis_y_op": "<y-axis expression e.g. Neta_5/Neta_4, or empty>",
+      "analysis_param_str": "<x-axis global name for improved_cost_clean.py, or empty>",
+      "target_metric": "<Neta_1..Neta_5 | Neta_2 default>",
       "threshold": <float or null>,
       "threshold_op": "<> | >= | < | <= | ==>",
-      "sequence_file": "<filename.py or empty string>",
-      "params_file": "<e.g. examples/params.txt or empty string if not needed>",
       "max_iterations": <int>,
-      "needs_user_hook": <true if the user must intervene before this stage>,
-      "hook_description": "<what the user must do, or empty string>",
       "stage_kind": "<optimize | sweep>",
-      "sweep_param": "<global variable name being swept, or empty string>",
-      "plot_ratio": "<numerator/denominator metric ratio to plot, e.g. Neta_5/Neta_4, or empty string>",
-      "sweep_range_mhz": <total sweep range converted to MHz, e.g. 0.003 for 3kHz, or null>,
-      "sweep_step_mhz": <step size converted to MHz, e.g. 0.00025 for 250Hz, or null>
-    }
+      "sweep_param": "<exact global name or empty>",
+      "plot_ratio": "<e.g. Neta_5/Neta_4 or empty>",
+      "sweep_range_mhz": <float or null>,
+      "sweep_step_mhz": <float or null>
+    }}
   ],
   "timeout_seconds": <int>,
-  "rationale": "<one sentence summarising the overall plan>"
-}
+  "rationale": "<one sentence>"
+}}
 
 Rules:
-- target_metric must be one of: Neta_1, Neta_2, Neta_3, Neta_4, Neta_5, Sz, contrast, N_atoms
-- If a metric is not clearly specified, default to Neta_2 for loading stages
-- For sweep stages with a plot_ratio (e.g. "Neta_5/Neta_4"), set target_metric to the NUMERATOR metric (e.g. Neta_5)
-- If no threshold is specified, set threshold to null
-- If no sequence is specified, use the most relevant one from the documents
-- Default max_iterations is 20 per stage
-- Default timeout_seconds is 3600
-- For stages that require user intervention (e.g. turn FNC on/off), set needs_user_hook=true
-- stage_kind="sweep" for parameter scans; stage_kind="optimize" for threshold-based optimizations
-- For sweep stages, set sweep_param to the EXACT global variable name as it appears in runmanager (do NOT abbreviate or paraphrase it)
-- For sweep stages that plot a ratio (e.g. "plot neta5/neta4"), set plot_ratio accordingly (e.g. "Neta_5/Neta_4")
-- For a sweep, set threshold to null and max_iterations to the desired number of scan points (default 15)
-- For a sweep with an explicit range/step (e.g. "3kHz in steps of 250Hz"), convert both to MHz: sweep_range_mhz=0.003, sweep_step_mhz=0.00025. Set max_iterations = round(sweep_range_mhz / sweep_step_mhz) + 1
+- Use ONLY sequences and analysis scripts from the lists above
+- sweep_param must be VERBATIM from the user's prompt or the globals list
+- For calibrate: task_type=calibrate, stage_kind=sweep, use the calibration sequence + analysis script
+- For resonance: task_type=resonance, stage_kind=sweep, use the RABI sequence + improved_cost_clean.py
+- For optimize: task_type=optimize, stage_kind=optimize, pick any loading-capable sequence
+- For answer: task_type=answer, no sequence or shots needed
+- Sweeps have no threshold (null); optimize stages have threshold
+- For frequency sweeps (resonance): convert range/step to MHz for sweep_range_mhz/sweep_step_mhz; max_iterations = round(sweep_range_mhz / sweep_step_mhz) + 1
+- For calibrate (calibration_precession_time sweep): set sweep_param="calibration_precession_time", sweep_start=0.5, sweep_end=20.0, max_iterations=20, sweep_range_mhz=null, sweep_step_mhz=null
+- sweep_start and sweep_end are in the native units of the parameter (ms for time, MHz for frequency)
+- Default timeout_seconds = 3600
 """
 
 
@@ -152,12 +178,23 @@ Default params file: {default_params}
 
     overrides = _extract_sweep_overrides(prompt)
 
-    resp = client.generate(user_prompt, system=SYSTEM_INSTRUCTION, temperature=0.1)
+    resp = client.generate(user_prompt, system=_build_system_instruction(), temperature=0.1)
     goal = _parse_llm_goal(resp.text, default_params, prompt, explicit_params)
 
     # Hard-override with deterministically extracted values — LLM must not lose these
     for stage in goal.stages:
-        if overrides.get("sweep_param"):
+        # For calibrate stages: always set precession time sweep
+        if stage.task_type == "calibrate":
+            stage.stage_kind = "sweep"
+            stage.sweep_param = "calibration_precession_time"
+            if stage.sweep_start is None:
+                stage.sweep_start = 0.5
+            if stage.sweep_end is None:
+                stage.sweep_end = 20.0
+            if stage.max_iterations < 5:
+                stage.max_iterations = 20
+
+        if overrides.get("sweep_param") and stage.task_type != "calibrate":
             stage.sweep_param = overrides["sweep_param"]
             stage.stage_kind = "sweep"
         if overrides.get("sweep_range_mhz") is not None:
@@ -218,21 +255,29 @@ def _parse_llm_goal(text: str, default_params: str, raw_prompt: str,
     stages: List[Stage] = []
     for s in data.get("stages", []):
         raw_kind = s.get("stage_kind", "optimize")
+        raw_task = s.get("task_type", "optimize")
+        valid_tasks = {"answer", "calibrate", "resonance", "optimize"}
         stage = Stage(
             name=s.get("name", "stage"),
             description=s.get("description", ""),
+            task_type=raw_task if raw_task in valid_tasks else "optimize",
             target_metric=_validate_metric(s.get("target_metric", "Neta_2")),
             threshold=_safe_float(s.get("threshold")),
             threshold_op=s.get("threshold_op") or ">",
             sequence_file=s.get("sequence_file", ""),
-            params_file=s.get("params_file") or default_params or None,
-            max_iterations=int(s.get("max_iterations", 20)),
+            analysis_script=s.get("analysis_script") or None,
+            analysis_y_op=s.get("analysis_y_op") or None,
+            analysis_param_str=s.get("analysis_param_str") or None,
+            params_file=None,  # params come from config.json globals, not a file
+            max_iterations=int(s.get("max_iterations") or 20),
             notes=s.get("hook_description", ""),
             stage_kind=raw_kind if raw_kind in ("optimize", "sweep") else "optimize",
             sweep_param=_pick_sweep_param(s.get("sweep_param"), explicit_params),
             plot_ratio=s.get("plot_ratio") or None,
             sweep_range_mhz=_safe_float(s.get("sweep_range_mhz")),
             sweep_step_mhz=_safe_float(s.get("sweep_step_mhz")),
+            sweep_start=_safe_float(s.get("sweep_start")),
+            sweep_end=_safe_float(s.get("sweep_end")),
         )
         stages.append(stage)
 
@@ -246,7 +291,7 @@ def _parse_llm_goal(text: str, default_params: str, raw_prompt: str,
 
     return Goal(
         stages=stages,
-        timeout_seconds=int(data.get("timeout_seconds", 3600)),
+        timeout_seconds=int(data.get("timeout_seconds") or 3600),
         raw_prompt=raw_prompt,
     )
 

@@ -4,26 +4,33 @@ from typing import Literal, Optional, List, Dict, Any
 from pydantic import BaseModel
 
 ThresholdOp = Literal[">", ">=", "<", "<=", "=="]
+TaskType = Literal["answer", "calibrate", "resonance", "optimize"]
 
 
 class Stage(BaseModel):
     name: str
     description: str = ""
+    task_type: TaskType = "optimize"        # what kind of task this stage is
     target_metric: str = "Neta_2"
     threshold: Optional[float] = None
     threshold_op: ThresholdOp = ">"
     sequence_file: str = ""
-    params_file: Optional[str] = "examples/params.txt"
+    analysis_script: Optional[str] = None  # analysis script to run after shots
+    analysis_y_op: Optional[str] = None    # y-axis expression e.g. "Neta_5/Neta_4"
+    analysis_param_str: Optional[str] = None  # x-axis param for improved_cost_clean.py
+    params_file: Optional[str] = None  # deprecated — use config.json globals instead
     max_iterations: int = 50
     status: Literal["pending", "active", "complete", "failed"] = "pending"
     result: Optional[Dict[str, Any]] = None
     notes: str = ""
     # sweep support
     stage_kind: Literal["optimize", "sweep"] = "optimize"
-    sweep_param: Optional[str] = None       # global being swept
-    plot_ratio: Optional[str] = None        # e.g. "Neta_5/Neta_4"
-    sweep_range_mhz: Optional[float] = None # total sweep range in MHz (e.g. 0.003 for 3kHz)
-    sweep_step_mhz: Optional[float] = None  # step size in MHz (e.g. 0.00025 for 250Hz)
+    sweep_param: Optional[str] = None
+    plot_ratio: Optional[str] = None
+    sweep_range_mhz: Optional[float] = None
+    sweep_step_mhz: Optional[float] = None
+    sweep_start: Optional[float] = None  # explicit start value (any units)
+    sweep_end: Optional[float] = None    # explicit end value (any units)
 
     def threshold_met(self, value: float) -> bool:
         if self.threshold is None:

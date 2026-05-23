@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from superradiant_assistant.goal import Goal, Stage
-from superradiant_assistant.params import load_params
+from superradiant_assistant.params import load_params, ParamSpec
 from superradiant_assistant.signals import ShotSignal
 from superradiant_assistant.state import STATE
 from superradiant_assistant.hooks import HookManager
@@ -28,19 +28,29 @@ def run_loop(
 
     # build planners/coders per stage lazily
     def _make_planner_coder(stage: Stage):
-        params = []
-        if stage.params_file:
-            params_path = (repo_root / stage.params_file).resolve()
-            if params_path.exists():
-                params = load_params(params_path)
-                print(f"  [params] loaded {len(params)} bounds from {params_path.name}")
-            else:
-                print(f"  [params] {stage.params_file} not found — LLM will infer bounds from context")
-        else:
-            print("  [params] no params file specified — LLM will infer bounds from context")
+        # Build params list from config.json globals (replaces params.txt)
+        params: List[ParamSpec] = []
+        if stage.stage_kind != "sweep":
+            from superradiant_assistant.config import CONFIG
+            for g in CONFIG.experiment_globals:
+                lo = g.get("min")
+                hi = g.get("max")
+                if lo is not None and hi is not None:
+                    try:
+                        params.append(ParamSpec(
+                            name=g["name"],
+                            lo=float(lo),
+                            hi=float(hi),
+                            init=(float(lo) + float(hi)) / 2,
+                        ))
+                    except (TypeError, ValueError):
+                        pass
+            if params:
+                print(f"  [params] using {len(params)} globals from config.json")
 
         # Sweep stages with explicit range: use deterministic coder (no LLM needed)
-        if stage.stage_kind == "sweep" and stage.sweep_param and stage.sweep_range_mhz:
+        if stage.stage_kind == "sweep" and stage.sweep_param and (
+                stage.sweep_range_mhz or stage.sweep_start is not None):
             from superradiant_assistant.orchestrator.sweep_coder import DeterministicSweepCoder
             rm_iface = getattr(executor, "runmanager", None)
             sweep_coder = DeterministicSweepCoder(runmanager=rm_iface)
@@ -77,7 +87,7 @@ def run_loop(
 
         print(f"\n{'='*70}")
         print(f"  STAGE: {stage.name} ({stage.stage_kind})")
-        print(f"  {stage.description}")
+        print(f"  {stage.description[:120]}")
         if stage.stage_kind == "sweep":
             print(f"  sweep: {stage.sweep_param}  |  plot: {stage.plot_ratio or '(none)'}")
             if stage.sweep_range_mhz and stage.sweep_step_mhz:
@@ -137,6 +147,11 @@ def run_loop(
                 print(f"  [coder] error: {e} — skipping iteration")
                 continue
 
+            # Sweep coder signals completion via notes field
+            if getattr(req, "notes", "") == "sweep_complete":
+                stop_reason = "sweep_complete"
+                break
+
             # --- Before-shot hook ---
             if not hooks.all_true("before_shot", request=req, iteration=it):
                 stop_reason = "rejected_by_before_shot"
@@ -191,7 +206,7 @@ def run_loop(
                 stop_reason = "max_iters_exhausted"
 
         # stage done
-        best_val = max(
+        best_val = None if stage.stage_kind == "sweep" else max(
             (getattr(s, stage.target_metric) for s in history
              if getattr(s, stage.target_metric) is not None),
             default=None,
@@ -199,12 +214,21 @@ def run_loop(
         if stage.stage_kind == "sweep":
             stage.status = "complete" if history else "failed"
             if history:
-                n = len(history)
-                print(f"\n  [sweep] {n} shots queued for {stage.sweep_param}")
-                if stage.plot_ratio:
-                    print(f"  [sweep] plotting {stage.plot_ratio} vs {stage.sweep_param} "
-                          f"from replay data...")
-                    _plot_sweep(stage, history)
+                req_globals = history[0].requested_globals if history else {}
+                sweep_val = req_globals.get(stage.sweep_param, "")
+                print(f"\n  [sweep] Sweep queued: {stage.sweep_param} = {sweep_val}")
+                print(f"  [sweep] Check BLACS — all shots should be in the queue.")
+                # Reset the swept parameter to its scalar base value in runmanager
+                if executor and hasattr(executor, "runmanager") and stage.sweep_param.endswith("_list"):
+                    base_param = stage.sweep_param[:-5]  # strip "_list"
+                    try:
+                        g = executor.runmanager.get_globals()
+                        base_val = g.get(base_param)
+                        if base_val is not None:
+                            executor.runmanager.set_globals({stage.sweep_param: base_val})
+                            print(f"  [sweep] Reset {stage.sweep_param} = {base_val} (scalar)")
+                    except Exception as e:
+                        print(f"  [sweep] Could not reset {stage.sweep_param}: {e}")
         else:
             stage.status = "complete" if stop_reason == "target_met" else "failed"
         stage.result = {
@@ -240,10 +264,12 @@ def _plot_sweep(stage, history: List[ShotSignal]) -> None:
 
     xs, ys = [], []
     for sig in history:
-        # Look in all_globals first (covers non-Atom-Loading params like clock frequency),
-        # then fall back to atom_loading_globals
-        combined = {**sig.atom_loading_globals, **sig.all_globals}
-        x = combined.get(stage.sweep_param)
+        # Use requested_globals first (the value the coder asked for — always a clean float).
+        # Fall back to all_globals (historical shot's stored value, may be an expression/array).
+        x = sig.requested_globals.get(stage.sweep_param)
+        if x is None:
+            combined = {**sig.atom_loading_globals, **sig.all_globals}
+            x = combined.get(stage.sweep_param)
         if x is None:
             continue
         try:

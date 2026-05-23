@@ -24,7 +24,8 @@ class ShotSignal(BaseModel):
 
     # Globals snapshot
     atom_loading_globals: Dict[str, Any] = Field(default_factory=dict)
-    all_globals: Dict[str, Any] = Field(default_factory=dict)  # all groups merged
+    all_globals: Dict[str, Any] = Field(default_factory=dict)    # all groups merged
+    requested_globals: Dict[str, Any] = Field(default_factory=dict)  # what the coder requested
 
     success: bool = True
     notes: str = ""

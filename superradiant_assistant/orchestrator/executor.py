@@ -48,6 +48,8 @@ class OfflineReplayExecutor:
                    key=lambda s: _distance(req.globals_to_set,
                                            {**s.atom_loading_globals, **s.all_globals}))
         self._used_ids.add(best.shot_id)
+        # Tag the signal with what was requested so sweep plots use the right x-values
+        best = best.model_copy(update={"requested_globals": dict(req.globals_to_set)})
         return best
 
 

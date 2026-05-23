@@ -53,8 +53,6 @@ class Config:
     )
     historical_data_root: Path = field(
         default_factory=lambda: Path(
-            # MEMORY_DATA_PATH is the user-facing key (matches HAL convention);
-            # HISTORICAL_DATA_PATH is the legacy env-var fallback.
             _get("MEMORY_DATA_PATH") or
             _get("HISTORICAL_DATA_PATH",
                  r"C:\Users\radzi\Documents\data_2026_05_18")
@@ -80,6 +78,17 @@ class Config:
             "EXEC_IMPORT",
             "import numpy as np\nimport h5py\nimport pandas as pd\n"
         )
+    )
+
+    # Experiment-specific lists loaded from config.json
+    sequences: list = field(
+        default_factory=lambda: _cfg_json.get("sequences", [])
+    )
+    analysis_scripts: list = field(
+        default_factory=lambda: _cfg_json.get("analysis_scripts", [])
+    )
+    experiment_globals: list = field(
+        default_factory=lambda: _cfg_json.get("globals", [])
     )
 
     knowledge_root: Path = REPO_ROOT / "superradiant_assistant" / "knowledge"
@@ -152,6 +161,11 @@ class Config:
                 ),
             ),
             KnowledgeSource(
+                path=self.sequences_root / "assistant_sequences",
+                kind="sequence", glob="*.py",
+                exclude=("__init__.py",),
+            ),
+            KnowledgeSource(
                 path=self.subsequences_root,
                 kind="subsequence", glob="*.py",
                 exclude=("__init__.py", "__pycache__", "dummy_filename.py"),
@@ -167,6 +181,14 @@ class Config:
                     "measure_sz_over_s.py",
                     "get_expected_sz.py",
                     "calculate_squeezing_photon_imbalance.py",
+                ),
+            ),
+            KnowledgeSource(
+                path=self.analysis_scripts_root / "meta",
+                kind="analysis", glob="*.py",
+                include=(
+                    "improved_cost_clean.py",
+                    "calibrate_larmor_frequency_clean.py",
                 ),
             ),
         ]
