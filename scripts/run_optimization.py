@@ -435,17 +435,25 @@ def main():
                     help="Override max iterations per stage")
     ap.add_argument("--max-dollars", type=float, default=100.0)
     ap.add_argument("--max-tokens", type=int, default=1_000_000)
+    ap.add_argument("--model", type=str, default=None,
+                    help="Override LLM model, e.g. bedrock/claude-haiku-4-5, "
+                         "openai/gpt-5-mini, meta/llama-4-maverick")
     args = ap.parse_args()
 
     llm_client = None
     knowledge = None
 
     if args.llm:
-        if not CONFIG.gemini_api_key:
+        # Prefer Parley key, fall back to Gemini
+        if CONFIG.parley_api_key:
+            provider = "parley"
+        elif CONFIG.gemini_api_key:
+            provider = "gemini"
+        else:
             config_example = REPO_ROOT / "config.json.example"
-            print("ERROR: GEMINI_API_KEY is not set.")
-            print(f"  Copy {config_example} → {REPO_ROOT / 'config.json'}")
-            print("  and fill in your Gemini API key.")
+            print("ERROR: No LLM API key found.")
+            print("  Set PARLEY_API_KEY (MIT Parley) or GEMINI_API_KEY in .env or config.json.")
+            print(f"  See {config_example} for the config format.")
             return
 
         from superradiant_assistant.llm.client import make_client
@@ -453,7 +461,8 @@ def main():
         from superradiant_assistant.knowledge.loader import load_knowledge_base
 
         tracker = CostTracker(max_dollars=args.max_dollars, max_tokens=args.max_tokens)
-        llm_client = make_client("gemini", cost_tracker=tracker)
+        llm_client = make_client(provider, model=args.model, cost_tracker=tracker)
+        print(f"  LLM provider: {provider} (model: {llm_client.model})")
         print("Loading knowledge base...")
         knowledge = load_knowledge_base()
         print(f"  loaded {len(knowledge)} documents\n")

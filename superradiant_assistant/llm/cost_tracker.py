@@ -6,16 +6,27 @@ from typing import Dict
 
 # Dollars per 1M tokens. Update as providers change pricing.
 PRICE_TABLE: Dict[str, Dict[str, float]] = {
-    # Gemini 2.5 Flash (paid tier; free tier is $0)
-    "gemini-2.5-flash":     {"input": 0.30, "output": 2.50},
-    "gemini-2.0-flash":     {"input": 0.10, "output": 0.40},
-    "gemini-2.5-pro":       {"input": 1.25, "output": 10.00},
-    # Anthropic
-    "claude-3-5-sonnet":    {"input": 3.00, "output": 15.00},
-    "claude-3-5-haiku":     {"input": 0.80, "output": 4.00},
-    # OpenAI
-    "gpt-4o-mini":          {"input": 0.15, "output": 0.60},
-    "gpt-4o":               {"input": 2.50, "output": 10.00},
+    # Gemini (direct)
+    "gemini-2.5-flash":                 {"input": 0.30,  "output": 2.50},
+    "gemini-2.0-flash":                 {"input": 0.10,  "output": 0.40},
+    "gemini-2.5-pro":                   {"input": 1.25,  "output": 10.00},
+    # Parley — Claude via AWS Bedrock
+    "bedrock/claude-haiku-4-5":         {"input": 1.00,  "output": 5.00},
+    "bedrock/claude-sonnet-4-6":        {"input": 3.00,  "output": 15.00},
+    "bedrock/claude-opus-4-6":          {"input": 5.00,  "output": 25.00},
+    "bedrock/claude-opus-4-7":          {"input": 5.00,  "output": 25.00},
+    # Parley — OpenAI
+    "openai/gpt-5-nano":                {"input": 0.10,  "output": 0.50},
+    "openai/gpt-5-mini":                {"input": 0.25,  "output": 2.00},
+    "openai/gpt-5":                     {"input": 1.25,  "output": 10.00},
+    "openai/gpt-5.4":                   {"input": 2.50,  "output": 15.00},
+    "openai/gpt-5.5":                   {"input": 5.00,  "output": 30.00},
+    # Parley — Google
+    "google/gemini-3.0-flash":          {"input": 0.50,  "output": 3.00},
+    "google/gemini-2.5-pro":            {"input": 2.50,  "output": 15.00},
+    "google/gemini-3.1-pro":            {"input": 4.00,  "output": 18.00},
+    # Parley — Meta (free)
+    "meta/llama-4-maverick":            {"input": 0.00,  "output": 0.00},
 }
 
 

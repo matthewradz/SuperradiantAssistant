@@ -64,6 +64,9 @@ class Config:
     gemini_api_key: str = field(
         default_factory=lambda: _get("GEMINI_API_KEY", "")
     )
+    parley_api_key: str = field(
+        default_factory=lambda: _get("PARLEY_API_KEY", "")
+    )
     max_dollars_per_run: float = field(
         default_factory=lambda: float(_get("MAX_DOLLARS_PER_RUN", 100.0))
     )

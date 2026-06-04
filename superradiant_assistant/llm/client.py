@@ -162,6 +162,94 @@ class GeminiClient(LLMClient):
     
 
 
+class ParleyClient(LLMClient):
+    """OpenAI-compatible client for MIT Parley API gateway.
+
+    Supports any model routable via Parley using provider/model-name syntax,
+    e.g. 'bedrock/claude-sonnet-4-5', 'google/gemini-2.5-flash', 'openai/gpt-4o'.
+    Base URL: https://parley.api.mit.edu/v1
+    """
+
+    PARLEY_BASE_URL = "https://parley.api.mit.edu/v1"
+
+    def __init__(
+        self,
+        model: str = "bedrock/claude-sonnet-4-6",
+        api_key: Optional[str] = None,
+        cost_tracker: Optional[CostTracker] = None,
+    ):
+        super().__init__(model=model, cost_tracker=cost_tracker)
+        try:
+            from openai import OpenAI
+        except ImportError as e:
+            raise ImportError(
+                "openai not installed. Run: pip install openai"
+            ) from e
+
+        key = api_key or os.environ.get("PARLEY_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "No Parley API key found. Set PARLEY_API_KEY in .env or environment."
+            )
+        self._client = OpenAI(api_key=key, base_url=self.PARLEY_BASE_URL)
+
+    def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
+        temperature: float = 0.2,
+        max_retries: int = 4,
+        base_delay: float = 5.0,
+    ) -> LLMResponse:
+        if self.cost_tracker.over_budget():
+            raise RuntimeError(f"Cost cap exceeded: {self.cost_tracker.summary()}")
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": float(temperature),
+        }
+        if max_output_tokens is not None:
+            kwargs["max_tokens"] = int(max_output_tokens)
+
+        last_exc: Exception = RuntimeError("no attempts made")
+        for attempt in range(max_retries):
+            try:
+                resp = self._client.chat.completions.create(**kwargs)
+                text = resp.choices[0].message.content or ""
+                in_toks = getattr(resp.usage, "prompt_tokens", 0) or 0
+                out_toks = getattr(resp.usage, "completion_tokens", 0) or 0
+                self.cost_tracker.record(self.model, in_toks, out_toks)
+                return LLMResponse(
+                    text=text,
+                    model=self.model,
+                    input_tokens=in_toks,
+                    output_tokens=out_toks,
+                    raw=resp,
+                )
+            except Exception as e:
+                last_exc = e
+                err_str = str(e)
+                if any(code in err_str for code in ("503", "429", "500", "UNAVAILABLE", "RATE_LIMIT")):
+                    delay = base_delay * (2 ** attempt)
+                    print(f"  [LLM] transient error (attempt {attempt+1}/{max_retries}), "
+                          f"retrying in {delay:.0f}s: {err_str[:80]}")
+                    import time
+                    time.sleep(delay)
+                    continue
+                raise
+
+        raise RuntimeError(
+            f"LLM call failed after {max_retries} attempts. Last error: {last_exc}"
+        )
+
+
 def make_client(
     provider: str = "gemini",
     model: Optional[str] = None,
@@ -171,6 +259,11 @@ def make_client(
     if provider == "gemini":
         return GeminiClient(
             model=model or "gemini-2.5-flash",
+            cost_tracker=cost_tracker,
+        )
+    if provider in ("parley", "openai"):
+        return ParleyClient(
+            model=model or "bedrock/claude-sonnet-4-5",
             cost_tracker=cost_tracker,
         )
     raise ValueError(f"Unknown provider: {provider}")
