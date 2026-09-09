@@ -1,5 +1,28 @@
+# The AGENT environment only. Python 3.11+.
+#
+# The labscript suite (runmanager / BLACS / lyse) lives in a SEPARATE, older
+# environment and is never imported from here -- it is reached by spawning that
+# interpreter as a subprocess (scripts/runmanager_bridge.py). Do not install
+# labscript into this environment.
+#
+# Versions verified working together on 2026-08-20, Python 3.11.15:
+#   numpy 2.4.6        h5py 3.16.0       pandas 3.0.5      pydantic 2.13.4
+#   matplotlib 3.11.1  scipy 1.17.1      requests 2.34.2   python-dotenv 1.2.2
+#   google-genai 2.13.0                  anthropic 0.120.2
+
 numpy
 h5py
 pandas
 pydantic
 matplotlib
+scipy
+
+# Providers. Either key alone is enough to run, but knowledge retrieval always
+# embeds with Gemini, so google-genai is needed even on a Claude-only session.
+google-genai
+anthropic
+
+# advisor_tools: fetch_web_page / search_web
+requests
+
+python-dotenv

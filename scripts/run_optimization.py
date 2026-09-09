@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -86,6 +87,7 @@ def _run_goal(goal, args, llm_client, knowledge):
             s.max_iterations = args.max_iters
     goal.max_dollars = args.max_dollars
     goal.max_tokens = args.max_tokens
+    goal.goal_mode = getattr(args, "goal_mode", "on") == "on"
 
     live = getattr(args, "live", False)
     hooks = build_hooks(require_confirm=args.confirm, live=live)
@@ -170,8 +172,13 @@ def _handle_answer_task(stages, llm_client, knowledge):
         print(f"\nAssistant: {resp.text.strip()}")
 
 
-_SYNTHETIC_SWEEP_FOLDER  = r"C:\Users\radzi\Documents\data_synthetic_sweep"
-_SYNTHETIC_LARMOR_FOLDER = r"C:\Users\radzi\Documents\data_synthetic_larmor"
+#: Synthetic shot folders for the offline paths, beside this repo by default.
+#: Override with SYNTHETIC_SWEEP_FOLDER / SYNTHETIC_LARMOR_FOLDER.
+_REPO_PARENT = Path(__file__).resolve().parents[2]
+_SYNTHETIC_SWEEP_FOLDER = os.environ.get("SYNTHETIC_SWEEP_FOLDER") or str(
+    _REPO_PARENT / "data_synthetic_sweep")
+_SYNTHETIC_LARMOR_FOLDER = os.environ.get("SYNTHETIC_LARMOR_FOLDER") or str(
+    _REPO_PARENT / "data_synthetic_larmor")
 
 
 def _read_delta_from_folder(folder) -> float | None:
@@ -359,6 +366,7 @@ def _run_interactive(args, llm_client, knowledge):
     print("=" * 70)
     print("  SuperradiantAssistant — Interactive Mode  (--llm)")
     print("  Ask questions about the experiment, or state a goal to execute.")
+    print(f"  Goal mode: {args.goal_mode}   (/goal on|off to change)")
     print("  Type 'exit' or 'quit' to stop.")
     print("=" * 70)
 
@@ -375,6 +383,18 @@ def _run_interactive(args, llm_client, knowledge):
             continue
         if user_input.lower() in ("exit", "quit", "q"):
             break
+
+        if user_input.lower().startswith("/goal"):
+            parts = user_input.split()
+            if len(parts) == 2 and parts[1] in ("on", "off"):
+                args.goal_mode = parts[1]
+                if parts[1] == "on":
+                    print("[goal mode ON] optimize stages iterate until the threshold is met.")
+                else:
+                    print("[goal mode OFF] optimize stages take one shot, then report.")
+            else:
+                print(f"[goal mode is {args.goal_mode}] usage: /goal on | /goal off")
+            continue
 
         # Classify as COMMAND or QUERY — include last exchange for follow-up context
         classify_input = user_input
@@ -431,28 +451,25 @@ def main():
     ap.add_argument("--live", action="store_true",
                     help="Queue shots in runmanager/BLACS (requires GUIs open); "
                          "results still come from offline replay")
+    ap.add_argument("--goal-mode", choices=["on", "off"], default="on",
+                    help="on (default): keep iterating until the threshold is met. "
+                         "off: one shot per optimize stage, then report — much cheaper")
     ap.add_argument("--max-iters", type=int, default=None,
                     help="Override max iterations per stage")
     ap.add_argument("--max-dollars", type=float, default=100.0)
     ap.add_argument("--max-tokens", type=int, default=1_000_000)
     ap.add_argument("--model", type=str, default=None,
-                    help="Override LLM model, e.g. bedrock/claude-haiku-4-5, "
-                         "openai/gpt-5-mini, meta/llama-4-maverick")
+                    help="Override Gemini model, e.g. gemini-2.5-flash, gemini-2.5-pro")
     args = ap.parse_args()
 
     llm_client = None
     knowledge = None
 
     if args.llm:
-        # Prefer Parley key, fall back to Gemini
-        if CONFIG.parley_api_key:
-            provider = "parley"
-        elif CONFIG.gemini_api_key:
-            provider = "gemini"
-        else:
+        if not CONFIG.gemini_api_key:
             config_example = REPO_ROOT / "config.json.example"
             print("ERROR: No LLM API key found.")
-            print("  Set PARLEY_API_KEY (MIT Parley) or GEMINI_API_KEY in .env or config.json.")
+            print("  Set GEMINI_API_KEY in .env or config.json.")
             print(f"  See {config_example} for the config format.")
             return
 
@@ -461,8 +478,8 @@ def main():
         from superradiant_assistant.knowledge.loader import load_knowledge_base
 
         tracker = CostTracker(max_dollars=args.max_dollars, max_tokens=args.max_tokens)
-        llm_client = make_client(provider, model=args.model, cost_tracker=tracker)
-        print(f"  LLM provider: {provider} (model: {llm_client.model})")
+        llm_client = make_client(model=args.model, cost_tracker=tracker)
+        print(f"  LLM provider: gemini (model: {llm_client.model})")
         print("Loading knowledge base...")
         knowledge = load_knowledge_base()
         print(f"  loaded {len(knowledge)} documents\n")

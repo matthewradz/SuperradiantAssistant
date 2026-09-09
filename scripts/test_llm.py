@@ -9,7 +9,7 @@ from superradiant_assistant.llm.client import make_client
 
 
 def main():
-    client = make_client(provider="gemini", model="gemini-2.5-flash")
+    client = make_client()
     resp = client.generate(
         prompt="Say 'hello from Gemini' and nothing else.",
         temperature=0.0,

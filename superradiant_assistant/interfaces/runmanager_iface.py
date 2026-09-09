@@ -1,23 +1,25 @@
-"""Runmanager interface that talks to the running GUI via a subprocess bridge.
-
-The bridge (scripts/runmanager_bridge.py) runs in the ybclock_3_11_24 conda env
-which has runmanager.remote installed. This file runs in the superradiant env.
-"""
+"""Runmanager interface that talks to the running GUI via a subprocess bridge."""
 from __future__ import annotations
 import json
+import os
+import sys
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+from superradiant_assistant.safety import validate_writes
+
 _BRIDGE = Path(__file__).resolve().parents[2] / "scripts" / "runmanager_bridge.py"
-_YBCLOCK_PYTHON = r"C:\Users\radzi\AppData\Local\Anaconda3\envs\ybclock_3_11_24\python.exe"
-_LIB_BIN = r"C:\Users\radzi\AppData\Local\Anaconda3\envs\ybclock_3_11_24\Library\bin"
+
+# ✅ 优先从环境变量读取，否则自动使用当前 Python 环境，避免硬编码路径报错
+_CONDA_ENV = os.environ.get("CONDA_PREFIX",
+                            os.path.expanduser(r"~\anaconda3\envs\python38"))
+_YBCLOCK_PYTHON = os.path.join(_CONDA_ENV, "python.exe")
+_LIB_BIN = os.path.join(_CONDA_ENV, "Library", "bin")
 
 
 def _call(action: str, **kwargs) -> Any:
     cmd = {"action": action, **kwargs}
-    env_patch = {"PATH": f"{_LIB_BIN};"}  # prepend so DLLs resolve
-    import os
     full_env = os.environ.copy()
     full_env["PATH"] = _LIB_BIN + ";" + full_env.get("PATH", "")
 
@@ -34,9 +36,13 @@ def _call(action: str, **kwargs) -> Any:
         )
     out = result.stdout.strip()
     if out:
-        data = json.loads(out)
+        try:
+            data = json.loads(out)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"runmanager bridge invalid JSON output: {out}") from e
+
         if not data.get("ok"):
-            raise RuntimeError(f"runmanager bridge: {data.get('error')}")
+            raise RuntimeError(f"runmanager bridge error: {data.get('error')}")
         return data.get("result")
     return None
 
@@ -53,7 +59,19 @@ class RunmanagerInterface:
             _call("set_shot_output_folder", path=output_folder)
 
     def set_globals(self, globals_to_set: Dict[str, Any]) -> None:
-        _call("set_globals", globals=globals_to_set)
+        _call("set_globals", globals=validate_writes(globals_to_set))
+
+    def set_labscript_file(self, path: str) -> None:
+        """Point runmanager at a different sequence file.
+
+        Separate from the constructor so a session can switch experiments; setting
+        it once at startup meant a multi-sequence run had to be clicked through
+        in the GUI.
+        """
+        _call("set_labscript_file", path=path)
+
+    def get_labscript_file(self) -> Optional[str]:
+        return _call("get_labscript_file")
 
     def engage(self) -> None:
         err = _call("error_in_globals")
@@ -62,10 +80,32 @@ class RunmanagerInterface:
         _call("engage")
 
     def set_globals_and_engage(self, globals_to_set: Dict[str, Any]) -> None:
-        _call("set_globals_and_engage", globals=globals_to_set)
+        _call("set_globals_and_engage", globals=validate_writes(globals_to_set))
 
     def get_globals(self) -> Dict[str, Any]:
-        return _call("get_globals") or {}
+        res = _call("get_globals")
+        # 增加一个 Debug 打印，可以在终端清楚看到 bridge 到底拿到了什么
+        # print(f"[DEBUG Bridge Raw Globals]: {res}") 
+        return res or {}
 
     def n_shots(self) -> int:
         return _call("n_shots") or 0
+
+    def compile_check(self, labscript_file: Optional[str] = None,
+                       globals_file: str = r"C:\Experiments\Cesium\globals.h5"
+                       ) -> Dict[str, Any]:
+        """Compile a sequence in a throwaway process and report any traceback.
+
+        The remote API exposes no compile status, and runmanager pipes compile
+        errors to its GUI output pane without ever writing them to a log. This
+        is therefore the only way to obtain the real reason a shot failed to
+        build instead of inferring it from the absence of output files.
+        """
+        target = labscript_file or self.get_labscript_file()
+        if not target:
+            return {"compiles": False, "error": "no labscript file is loaded"}
+        try:
+            return _call("compile_check", labscript_file=target,
+                         globals_file=globals_file) or {}
+        except Exception as e:
+            return {"compiles": None, "error": f"compile check unavailable: {e}"}

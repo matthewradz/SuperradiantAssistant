@@ -6,22 +6,26 @@ Used by the answer task type.
 """
 from __future__ import annotations
 import ast
+import os
 import re
 from pathlib import Path
 from typing import List, Dict, Set, Optional
 
 
 _LABSCRIPT_ROOT = Path(
-    r'C:\Users\radzi\Documents\labscript-suite\labscript-suite\userlib\labscriptlib\ybclock'
+    os.environ.get("ANALYSIS_LABSCRIPTLIB_ROOT")
+    or Path.home() / "labscript-suite" / "userlib" / "labscriptlib"
 )
 
 
 def _resolve_import(module: str) -> Optional[Path]:
     """Try to resolve a labscriptlib import to a file path."""
-    # Convert module path to file path: labscriptlib.ybclock.subsequences.X -> subsequences/X.py
+    # labscriptlib.<Apparatus>.subsequences.X -> <Apparatus>/subsequences/X.py.
+    # The anchor is `labscriptlib` rather than one apparatus's folder name, which
+    # resolved nothing for any other lab.
     parts = module.split(".")
-    if "ybclock" in parts:
-        idx = parts.index("ybclock")
+    if "labscriptlib" in parts:
+        idx = parts.index("labscriptlib")
         rel = Path(*parts[idx + 1:]).with_suffix(".py")
         candidate = _LABSCRIPT_ROOT / rel
         if candidate.exists():

@@ -10,7 +10,7 @@ authors = [{name = "Matthew Radzihovsky", email = "mattradz@mit.edu"}]
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-dependencies = ["numpy", "h5py", "pandas", "pydantic", "matplotlib"]
+dependencies = ["numpy", "h5py", "pandas", "pydantic", "matplotlib", "google-genai", "python-dotenv"]
 
 [tool.setuptools.packages.find]
 include = ["superradiant_assistant*"]

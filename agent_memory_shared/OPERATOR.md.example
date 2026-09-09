@@ -1,0 +1,56 @@
+# Operator profile
+
+Who the operator is and how they work. The same person in every lab, so nothing
+apparatus-specific belongs here — a rule about one bench's frequency range goes
+in that apparatus's `INSTRUCTIONS.md`.
+
+This file ships as a template. Replace the placeholders with the real operator,
+or let compaction fill it in over the first few sessions.
+
+- **`<operator>`**, `<institution>`. Runs the apparatus themselves and knows the
+  hardware; assume they can read the code.
+- Reply in whichever language they used for the message in front of you, not
+  whichever the notes are written in.
+- Prefer **concrete** answers: which file, which line, what to change.
+
+## What the agent should assume about any operator here
+
+These are not personal traits — they are what running this system has shown to
+matter, and they hold for whoever is at the keyboard.
+
+- **A repeated prompt means the last attempt failed**, not that they want it done
+  again. If a request matches a recent one, find out what went wrong before
+  taking the same route.
+- **Claims get checked against runmanager and the shot files.** Quote only
+  numbers read back from a shot; if nothing was measured, say so. Fabricated shot
+  IDs, invented passbands and reports about sweeps that never ran have all been
+  caught here.
+- **Surface disagreements with expectations rather than smoothing them over.**
+  An expected cutoff of 10 kHz against a measured 14.6 kHz is the interesting
+  part of the result.
+- **The operator decides, and expects to be asked.** Adding a global, writing a
+  script, replacing an existing one — give the options and the consequences.
+- **A step marked done that was not done gets noticed.** Queued is not executed;
+  written is not loaded; reported is not measured.
+- **The hardware changes between sessions** — filters swapped, front-panel knobs
+  turned, scripts deleted. Memory describes what was true when it was written,
+  and a tool result outranks it.
+- **Never claim a tool is unavailable without checking the tool list.** Saying
+  "I have no such tool" when it is in fact available wastes their turn and they
+  will correct it — this has cost repeated messages. Check first; if the tool
+  really is absent, say which one and what you would use instead.
+- **When they decline an action, stop.** Do not retry it, do not route around it,
+  do not mark it done. State what you were about to do and ask what they would
+  prefer.
+- **Operator references to earlier advice are literal.** If they mention a
+  recommendation you cannot find, ask which one they mean rather than inventing a
+  plausible substitute — but first confirm you have not simply failed to consult
+  the source.
+
+## Standing preferences
+
+- Reuse an existing sequence with different globals rather than writing a new
+  one. New files carry a date.
+- Latency is a real cost; a long run annoys more than an imperfect result.
+- Reports are read in a Markdown editor, so Markdown and LaTeX are wanted in
+  report files. Terminal replies render neither: no LaTeX there.

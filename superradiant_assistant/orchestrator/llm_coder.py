@@ -13,6 +13,7 @@ from superradiant_assistant.llm.client import LLMClient
 from superradiant_assistant.llm.prompts import coder_system_instruction, state2text
 from superradiant_assistant.orchestrator.planner import PlanStep, _best_metric
 from superradiant_assistant.orchestrator.developer import ShotRequest
+from superradiant_assistant.optimizers.hill_climb import _shot_globals
 
 
 class LLMCoder:
@@ -43,11 +44,11 @@ class LLMCoder:
         # Sweep stages: only vary the sweep parameter
         if stage.stage_kind == "sweep" and stage.sweep_param:
             sweep_history = []
-            for s in history:
-                val = s.atom_loading_globals.get(stage.sweep_param)
+            for i, s in enumerate(history):
+                val = _shot_globals(s).get(stage.sweep_param)
                 metric = getattr(s, stage.target_metric, None)
                 if val is not None:
-                    sweep_history.append(f"  iter {history.index(s)+1}: {stage.sweep_param}={val}, {stage.target_metric}={metric}")
+                    sweep_history.append(f"  iter {i+1}: {stage.sweep_param}={val}, {stage.target_metric}={metric}")
             history_text = "\n".join(sweep_history) or "  (no shots yet)"
 
             user_prompt = f"""
@@ -89,8 +90,9 @@ Return ONLY this JSON (no markdown):
                 for s in reversed(history):
                     v = getattr(s, stage.target_metric, None)
                     if v == best_val:
+                        got = _shot_globals(s)
                         best_params_text = "\n".join(
-                            f"  {p.name} = {s.atom_loading_globals.get(p.name, p.init)}"
+                            f"  {p.name} = {got.get(p.name, p.init)}"
                             for p in self.params
                         )
                         break

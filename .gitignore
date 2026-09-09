@@ -222,3 +222,14 @@ config.json
 
 # Generated sweep plots
 sweep_*.png
+
+# Per-apparatus configs are per-machine: they hold local data paths.
+# The committed templates are the .example files beside them.
+config.*.json
+!config.*.json.example
+
+# Shared memory (LABSCRIPT.md, OPERATOR.md) fills in with real, possibly
+# personal content over the course of real use -- same shape as config.json.
+# The committed templates are the .example files beside them.
+agent_memory_shared/*.md
+!agent_memory_shared/*.md.example

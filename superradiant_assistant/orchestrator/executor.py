@@ -37,10 +37,18 @@ class OfflineReplayExecutor:
         self._ensure_loaded()
         # For sweeps: need Neta_4 and Neta_5 for ratio. For optimize: need Neta_2.
         # Use all_globals for distance so sweep params (e.g. clock frequency) are matched.
+        # "Usable" means the shot carries some analysis result, whatever it is
+        # called. Requiring the ybclock Neta_* names excluded every shot from an
+        # experiment with different analysis, so replay silently fell back to
+        # unrelated shots and every metric read as None.
+        wanted = getattr(req, "required_metric", None)
         candidates = [s for s in self._cache
                       if s.shot_id not in self._used_ids
-                      and (s.Neta_4 is not None and s.Neta_5 is not None
-                           or s.Neta_2 is not None)]
+                      and s.metric_value(wanted) is not None] if wanted else []
+        if not candidates:
+            candidates = [s for s in self._cache
+                          if s.shot_id not in self._used_ids
+                          and s.available_metrics()]
         if not candidates:
             raise RuntimeError("No more historical shots available to replay.")
 

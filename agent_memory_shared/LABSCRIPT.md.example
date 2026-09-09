@@ -1,0 +1,163 @@
+# labscript, BLACS, lyse and runmanager
+
+True of the software stack, not of any one apparatus. Read in every lab.
+Nothing here may name a device, a channel, or a measured value.
+
+## Shot files: compiled is not executed
+
+- A shot file exists **as soon as runmanager compiles it**, carrying globals and
+  the connection table and nothing measured. BLACS adds `front_panel` and the
+  acquired data only when it actually executes (`executed by BLACS: True`).
+  Never claim a sweep ran without verifying execution — the file being there
+  proves only that runmanager wrote it.
+- A device's acquired data is a **group inside the shot's HDF5 file**, not a
+  directory on disk. `inspect_shot` shows the real layout; do not guess it and
+  fire a shot to find out whether the guess was right.
+
+## lyse
+
+- `data()` returns a **two-level MultiIndex**. Globals appear as `(name, '')` and
+  results as `(routine_name, result_name)`. Matching on `col[-1]` therefore finds
+  results but never globals — use `col[0]` for a global. The failure is silent:
+  the routine runs, plots nothing, and raises nothing.
+- lyse's dataframe is **cumulative**. Every shot ever added to the box stays
+  there, so `data()` returns previous sweeps as well as the current one. A
+  multishot routine must filter on the `sequence` column (a timestamp, one per
+  engage) before plotting, and should pick the newest sequence *that has
+  results*, since rows arrive one at a time while a sweep is being analysed.
+  `plt.clf()` does not help: the stale points are in the data, not on the canvas.
+  Overlaid sequences moved a fitted cutoff by 0.2 kHz without any warning.
+- Put the sequence identifier in the figure title. A plot window left open from
+  an earlier run is otherwise indistinguishable from a fresh one.
+- Writing an analysis routine is not loading it. Confirm with
+  `get_lyse_routines` before running anything that depends on it.
+- **Registering a new routine can silently drop others of the same kind.**
+  Adding one singleshot routine replaced the entire loaded singleshot list,
+  unloading a routine that was already running. Re-check `get_lyse_routines`
+  after adding a new one, and re-register the full intended set with
+  `set_lyse_routines` if anything is missing — do not assume "add" means append.
+- **Every routine that draws a figure must also save it.** lyse renders the
+  figure in its own window and nothing else; without a `savefig` the plot exists
+  only on screen, and the experiment report has no image to embed. Save it next
+  to the shot, named `<shot>__<figure>.png` — that is where `write_report`
+  looks, and any figure found there is embedded in the report:
+
+      fig.savefig(Path(path).with_name(Path(path).stem + '__My_Figure.png'),
+                  dpi=130)
+
+  This matters most for anything the results table cannot reproduce. A Lissajous
+  curve is an X-Y plot of two waveforms *within* one shot; the report's own plot
+  is scalar-vs-swept-parameter and can never draw it. Unsaved, it is lost.
+- A figure title stating a ratio, a frequency or a channel must be built from
+  the globals actually used, not typed in as a constant. A hardcoded title
+  survives the next parameter change and then lies about the data under it.
+- Singleshot routines reduce one shot to numbers; multishot routines produce the
+  curve across a sweep. A sweep-wide plot placed in the singleshot box re-runs on
+  every shot and stalls the lyse GUI.
+- `write_report` checks its own citations: it refuses to write if the markdown
+  names a shot ID that was never read back this session via `read_shot_results`
+  or `inspect_shot`, even if the number is correct and came from a note or an
+  earlier summary. Read every shot you intend to cite before drafting the
+  report, not after the refusal tells you which ones are missing.
+- A fit that hits a parameter bound, or whose curve misses the points, is a
+  failed fit. Reporting its parameters as a measurement is worse than reporting
+  nothing: `fc` pinned at its upper bound once became "the cutoff is 1.22 kHz".
+- **Residuals with a pattern are a missing parameter, not noise.** A signed
+  sequence like (-,+,+,+,+,-) across a periodic curve is a phase the model does
+  not have. Adding a free phase took one fit's residual from 10% to 0.9%.
+- **A fitted parameter outside the measured range is an extrapolation.** Quoting a
+  dark level, a baseline or an asymptote from data that never reached it is
+  reporting the model's slope, not a measurement. Check the range covers the
+  feature before quoting the feature.
+- **A trend across fits is only a trend if the fits are comparable.** Fits taken
+  over different spans, point counts or sets of free parameters produce different
+  parameter values from identical physics, and the difference looks exactly like
+  drift. Before calling a parameter change physical, check that every fit in the
+  series covered the same range and used the same model; if not, re-measure with a
+  common span rather than interpreting the discrepancy.
+- **Scatter that grows with the signal is the source, not the digitiser.**
+  Compare the residual near the maximum with the residual near the minimum: equal
+  means additive (digitiser, amplifier), proportional means multiplicative
+  (intensity noise). The second cannot be averaged away; it needs a reference arm.
+- **An absolute level is not comparable between runs without a reference.** Source
+  power and front-panel scaling change between runs, so a change in absolute
+  amplitude carries no information on its own. A ratio against a simultaneously
+  recorded reference channel does; without one, only within-run quantities
+  (periods, ratios, drift over the sweep) can be trended.
+- **A whole-trace gain change moves every feature by the same factor; a real
+  signal change does not.** If the peak of a periodic signal scales by one
+  factor but the noise floor and a near-zero feature (an extinction point, a
+  baseline) scale by a different factor or not at all, the cause is upstream of
+  the digitiser's gain stage — check the source before blaming the instrument
+  setting.
+
+## Reading a value out of an instrument
+
+- Prefer the **raw samples** over the instrument's own computed measurements. A
+  scope's `:MEASure:` values are a different code path from the waveform: they can
+  be absent on a model, return a sentinel for "invalid", or be one acquisition
+  stale, and every one of those looks like a number. Whatever you saved to the
+  shot file is what you can defend.
+- **A set of near-identical numbers across a swept parameter is evidence of a dead
+  acquisition, not of a flat response.** Before believing a null result, check
+  that consecutive readings differ *at all* -- compare the raw arrays, not the
+  summary statistics. Four waveplate angles once returned byte-for-byte identical
+  traces and were reported as "the parameter has no effect".
+- **A trace resting on a single digitiser code is not necessarily broken.** A
+  steady signal can be quieter than one code. But it is also what a clipped trace
+  looks like, and what a stale buffer looks like. Distinguish them by the codes:
+  0 or full-scale means clipped; identical across shots means stale; anything else
+  in the middle is a real, quiet signal.
+- **A shot can execute cleanly and still return all-None results** for a
+  routine's saved metrics, with no error raised anywhere. Check for `None`
+  entries explicitly rather than trusting a sweep's reported point count, which
+  can include the failed shot.
+
+## BLACS
+
+- A worker aborting with `AttributeError: 'NoneType' object has no attribute ...`
+  inside its own `blacs_workers.py` means the connection failed at `init` and
+  left the device handle as `None`. The instrument is not connected or not
+  powered. **Restarting the device tab does not fix this**, despite BLACS's own
+  message saying you must restart the device.
+- Do not drive an instrument from a separate script while BLACS holds its
+  session. Many small queries per shot can stall a VISA session outright.
+- The queue can be left **paused**; shots then sit in it and nothing runs. A
+  sweep that reports fewer analysed shots than queued is often this.
+
+## labscriptlib
+
+- An apparatus folder under `userlib/labscriptlib/` needs an `__init__.py`.
+  Without it Python treats it as a namespace package and compilation fails with
+  `KeyError: 'labscriptlib'`.
+- Files under `labscriptlib` must be **pure ASCII**. labscript reads them with
+  the system codepage, and a single non-ASCII byte aborts compilation.
+
+## Writing analysis code
+
+- The code guard blocks `import pathlib` and `import os` entirely in code
+  submitted via `write_analysis`/`write_shot` — both raise a refusal, not a
+  warning. Do filename manipulation (getting a stem, building a sibling path)
+  with plain string methods instead.
+
+## Instrument front panels
+
+- Drivers commonly **query** front-panel settings without writing them. A value
+  set in the connection table may never be applied; what runs is whatever is on
+  the panel. Read the acquired data rather than trusting the requested settings.
+- A channel scaled so the signal exceeds the screen is digitised as a **railed
+  square wave**, and an amplitude extracted from it looks like a plausible
+  measurement. Check what fraction of samples sit at the trace minimum and
+  maximum before trusting any amplitude: 98% at the rails once produced a
+  perfectly flat frequency response that was the screen boundary, not physics.
+- The capture window follows the panel timebase and is not fixed. Read the time
+  column and require at least two full cycles at the lowest frequency measured;
+  below that, an amplitude fit returns a meaningless number rather than failing.
+
+## Working practice
+
+- Most requests need **no new script**. Call `list_scripts` first — folders
+  accumulate near-duplicates when new files are written instead of existing ones
+  being reused.
+- `list_scripts` is the authority on what exists. Never name a file from memory
+  without checking: the operator deletes and renames things between sessions.
