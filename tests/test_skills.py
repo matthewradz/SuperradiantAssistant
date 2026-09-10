@@ -22,12 +22,19 @@ class TestFrontmatter:
         assert meta["name"] == "quoted"
 
 
+#: A skill that ships here, and a token that appears in its body but in no
+#: skill's description -- the two-tier tests need both, and naming a skill that
+#: has since been removed is what made this file fail on a fresh clone.
+A_SKILL = "waveplate-malus-sweep"
+BODY_ONLY_TOKEN = "theta0"
+
+
 class TestDiscovery:
     def test_finds_shipped_skills(self):
         names = SKILLS.names()
-        for expected in ("resonance-scan", "larmor-calibration",
-                         "atom-loading-optimization", "hardware-safety",
-                         "lab-knowledge-search"):
+        for expected in ("hardware-safety", "lab-knowledge-search",
+                         "writing-experiment-code", "filter-response-measurement",
+                         A_SKILL):
             assert expected in names
 
     def test_every_skill_declares_a_description(self):
@@ -43,22 +50,22 @@ class TestDiscovery:
 class TestTwoTierLoading:
     def test_menu_lists_names_without_bodies(self):
         menu = SKILLS.get_descriptions()
-        assert "resonance-scan" in menu
+        assert A_SKILL in menu
         # The menu goes in every system prompt, so it must stay short — body text
         # is only fetched via load_skill.
-        assert "delta_duration" not in menu
+        assert BODY_ONLY_TOKEN not in menu
         assert len(menu.splitlines()) == len(SKILLS.names())
 
     def test_get_content_returns_wrapped_body(self):
-        content = SKILLS.get_content("resonance-scan")
-        assert content.startswith('<skill name="resonance-scan">')
+        content = SKILLS.get_content(A_SKILL)
+        assert content.startswith(f'<skill name="{A_SKILL}">')
         assert content.endswith("</skill>")
-        assert "delta_duration" in content
+        assert BODY_ONLY_TOKEN in content
 
     def test_unknown_skill_reports_available_names(self):
         r = SKILLS.get_content("no-such-skill")
         assert "unknown skill" in r
-        assert "resonance-scan" in r
+        assert A_SKILL in r
 
     def test_body_matches_file_on_disk(self, tmp_path):
         d = tmp_path / "skills" / "demo"
