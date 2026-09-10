@@ -4,6 +4,15 @@
 
 **这份文档是后续所有步骤的输入**：subagent 的 `tools` 白名单、hook 的 `matcher`、goal 模式的判定条件、SKILL.md 的内容边界，全部从这里派生。
 
+> **读之前先知道**：这是**最初的设计记录**，不是当前状态的清单。实现已经从这里
+> 列的 8 个工具长到 35 个，团队也从 `主 agent / planner / coder / answer` 变成了
+> `lead / planner / coder / advisor`。角色名和 §5 的权限矩阵已按实现校对过；
+> **§1 的参数、指标、序列文件枚举没有**——那些是当初那台装置（ybclock 171-Yb 腔）
+> 的 `config.json`，本 checkout 已不再附带，只作为"枚举从配置生成"这条原则的
+> 示例来读，不要当成你这台装置有什么。
+>
+> 权威始终是运行中的系统：参数看你自己的 `config.json`，工具权限敲 `/team`。
+
 ---
 
 ## 0. 三条设计原则
@@ -79,7 +88,7 @@
 ```python
 {
   "query": str,                          # 自然语言查询
-  "role": "planner" | "coder" | "answer", # 影响文档类型偏好
+  "role": "planner" | "coder" | "advisor", # 影响文档类型偏好
   "top_k": int,                          # 1-10，默认 6
 }
 ```
@@ -90,7 +99,7 @@
 | 校验 | `top_k` 钳位到 [1, 10]，防止一次塞爆上下文 |
 | 返回 | 每篇文档的 title / kind / 摘要 + 命中函数的正文片段 |
 | signal | `"found {n} docs: {titles}"` |
-| 谁能用 | planner, coder, answer |
+| 谁能用 | lead, planner, coder, advisor |
 
 > **当前局限**：纯关键词打分（title/summary/tags 权重 ×3）。图 (b) 的 vectorize + cosine similarity + Remove 去重都没有。3 篇手写文档下够用，文档变多后再升级。
 
@@ -112,7 +121,7 @@
 | 校验 | `skill_name` 必须在启动时扫出的名单里 |
 | 返回 | `<skill name="...">` 包裹的 SKILL.md 正文 |
 | signal | `"loaded skill: {name}"` |
-| 谁能用 | planner, coder, answer |
+| 谁能用 | lead, planner, coder, advisor |
 
 ---
 
@@ -135,7 +144,7 @@
 | 校验 | `limit` 钳位；`include_globals=True` 时只返回白名单内的参数名 |
 | 返回 | 表格：shot_id + 各指标值 |
 | signal | `"read {n} shots, best {metric}={value}"` |
-| 谁能用 | planner, answer |
+| 谁能用 | lead, planner, coder, advisor |
 
 > ⚠️ **不要让模型传 folder 路径**。这是路径穿越的入口。数据根目录由 `config.json` 定，工具只在其内部工作。
 
@@ -161,7 +170,7 @@
 | 副作用 | 写一张 png（`plot_path`） |
 | 返回 | 拟合参数 + 是否找到 + plot 路径 |
 | signal | resonance: `"resonance at {f:.6f} MHz, linewidth {lw:.0f} Hz, min ratio {r:.3f}"`<br>calibration: `"correction {c:+.2f} Hz, fit freq {f:.1f} Hz"` |
-| 谁能用 | planner, coder |
+| 谁能用 | lead, planner, coder, advisor |
 
 ---
 
@@ -182,7 +191,7 @@
 | 校验 | 返回值过滤，只暴露 `config.json` 白名单内的参数 |
 | 风险 | 🟢 只读，但会起子进程。**不要在离线模式下暴露这个工具** |
 | signal | `"read {n} globals"` |
-| 谁能用 | planner, coder |
+| 谁能用 | lead, planner, coder, advisor |
 
 ---
 
@@ -210,7 +219,7 @@
 | 风险 | live 模式下会往 BLACS 排队真实实验 → **PreToolUse 确认门 + 审计** |
 | 返回 | `run_loop` 的 summary + 按 `signal_spec` 格式化的 signal |
 | signal | 例：`"target_met at iter 4 | best Neta_2=716.7 | 4 shots used"` |
-| 谁能用 | coder |
+| 谁能用 | lead, coder |
 
 **关键设计**：`signal_spec` 是图 (d) 的落地点。Plan 阶段决定"我要看到什么"，工具保证产出它，PostToolUse hook 把它写进 history，下一轮 Plan 读到它。这补上了现在 `signal_description` 生成后被丢弃的缺口。
 
@@ -246,7 +255,7 @@
 | 校验 | `mode=="centered"` 需要 `range_mhz` 和 `step_mhz` 都非空且 `step_mhz > 0`；`mode=="explicit"` 需要 `start != end`；算出的点数必须 ≥ 2；`sweep_param` 若以 `_list` 结尾，基准参数（去掉 `_list`）必须能从 runmanager 读到 |
 | 风险 | 🔴 **一次排 n 炮真实实验** → PreToolUse 确认门必须列出 start/end/n 让人确认 + 审计 |
 | signal | `"queued {n} shots: {param} from {start} to {end}"` |
-| 谁能用 | coder |
+| 谁能用 | lead, coder |
 
 ---
 
@@ -270,7 +279,7 @@
 | PostToolUse hook | **必须审计**：时间戳、参数、旧值、新值、reason、session_id |
 | 风险 | 🔴🔴 直接改变物理装置状态 |
 | signal | `"{name}: {old} -> {new} Hz"` |
-| 谁能用 | **只有主 agent**（planner/coder/answer 全都不给） |
+| 谁能用 | **只有 lead**（planner / coder / advisor 全都不给） |
 
 > 这个工具替代的是现在 `run_optimization.py` 第338-343行那段——裸 `input()` 确认、无审计、异常只打印。那是全项目最该补 hook 的地方。
 
@@ -313,18 +322,35 @@ no dip found | min ratio 0.981 | widen the sweep
 
 ## 5. 工具 × Agent 权限矩阵
 
-| 工具 | 主 agent | planner | coder | answer |
+这一节记的是最初那 8 个工具。实际实现已经长到 **35 个**，分配是
+lead 24 / coder 20 / advisor 17 / planner 12。**权威是运行中的注册表本身**：
+会话里敲 `/team`，或者
+`build_registry(...).names_for("<角色>")`。下表只作为设计意图的记录。
+
+| 工具 | lead | planner | coder | advisor |
 |---|---|---|---|---|
 | T1 search_lab_knowledge | ✓ | ✓ | ✓ | ✓ |
 | T2 load_skill | ✓ | ✓ | ✓ | ✓ |
-| T3 read_shot_results | ✓ | ✓ | — | ✓ |
-| T4 analyze_results | ✓ | ✓ | ✓ | — |
-| T5 get_runmanager_globals | ✓ | ✓ | ✓ | — |
+| T3 read_shot_results | ✓ | ✓ | ✓ | ✓ |
+| T4 analyze_results | ✓ | ✓ | ✓ | ✓ |
+| T5 get_runmanager_globals | ✓ | ✓ | ✓ | ✓ |
 | T6 run_optimization | ✓ | — | ✓ | — |
 | T7 run_sweep | ✓ | — | ✓ | — |
 | T8 set_runmanager_global | ✓ | — | — | — |
 
-`answer` 拿不到任何会动硬件的工具——这是**硬约束**（SDK 的 `AgentDefinition.tools` 是白名单，不是建议）。这直接实现了之前讨论的"先答 query 再跑 command"的安全性：回答问题的那条路径**物理上无法**触发实验。
+**`advisor` 拿不到任何会动硬件、也不会写任何持久状态的工具**——这是**硬约束**，
+不是建议：`ToolSpec.allowed_agents` 是白名单，而 `registry.dispatch()` 在调用
+handler 之前就会按它拒绝，所以即使模型被诱导去调用，那条路径**物理上无法**触发
+实验。这实现了之前讨论的"先答 query 再跑 command"的安全性。
+
+具体地，`advisor` 完全没有:
+`run_sweep`、`run_optimization`、`engage_shot`、`set_runmanager_global`、
+`load_sequence`、`set_lyse_routines`、`remember`，以及 creative 模式的全部写入
+工具(`write_shot`、`write_analysis`、`write_report`、`propose_global`)。
+`tests/test_lab_tools.py::TestPermissionMatrix` 逐一守这条。
+
+三个只读工具(T3/T4/T5)后来对所有角色开放：诊断需要读得到数据，而它们不改变
+任何东西。原表把它们对某些角色标为 `—`，与实现不符。
 
 ---
 
