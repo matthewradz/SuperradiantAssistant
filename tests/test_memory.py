@@ -77,7 +77,11 @@ class TestEpisodes:
         store.append_episode("Second thing.")
         text = store.episode_path().read_text(encoding="utf-8")
         assert "First thing." in text and "Second thing." in text
-        assert text.count("## ") == 2
+        # One `### HH:MM` per entry. Counting "## " instead also matched the
+        # page's own Summary / Next steps / Log headings -- and matched the
+        # "## " inside each entry's "### " -- so it read 5 once the day's page
+        # gained a template.
+        assert text.count("### ") == 2
 
     def test_written_to_a_dated_file(self, store):
         store.append_episode("x", day="2026-07-31")

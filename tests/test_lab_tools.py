@@ -30,16 +30,30 @@ def registry(gate):
 
 
 class TestPermissionMatrix:
-    """docs/tool-schema.md §5 — the answer agent must never reach hardware."""
+    """docs/tool-schema.md §5 — the consulted agent must never reach hardware.
 
-    def test_answer_agent_has_no_hardware_tools(self, registry):
-        allowed = set(registry.names_for("answer"))
-        assert allowed == {"search_lab_knowledge", "load_skill", "read_shot_results"}
-        for forbidden in ("run_optimization", "run_sweep", "set_runmanager_global"):
-            assert forbidden not in allowed
+    That role is the `advisor`; the design note still calls it `answer`, which
+    is what these tests asked the registry for. `names_for` on an unknown agent
+    returns an empty set, so the assertion could not fail for the right reason.
+    """
+
+    #: Every tool that reaches hardware or writes durable state. None of them
+    #: may appear for the advisor, whatever else it gains.
+    HARDWARE_AND_WRITES = ("run_optimization", "run_sweep", "engage_shot",
+                           "set_runmanager_global", "load_sequence",
+                           "set_lyse_routines", "remember", "write_shot",
+                           "write_analysis", "write_report", "propose_global")
+
+    def test_advisor_has_no_hardware_tools(self, registry):
+        allowed = set(registry.names_for("advisor"))
+        # It has to be able to read, or the whitelist proves nothing.
+        assert {"search_lab_knowledge", "load_skill",
+                "read_shot_results"} <= allowed
+        for forbidden in self.HARDWARE_AND_WRITES:
+            assert forbidden not in allowed, f"advisor must not have {forbidden}"
 
     def test_only_lead_may_write_globals(self, registry):
-        for agent in ("planner", "coder", "answer"):
+        for agent in ("planner", "coder", "advisor"):
             assert "set_runmanager_global" not in registry.names_for(agent)
         assert "set_runmanager_global" in registry.names_for("lead")
 
