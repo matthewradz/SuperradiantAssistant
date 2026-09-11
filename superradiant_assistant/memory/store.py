@@ -443,7 +443,12 @@ class MemoryStore:
             return default
 
     def _write(self, path: Path, text: str) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
+        # The parent of `path`, not just `root`. The operator profile and the
+        # shared labscript notes live in `root/shared/`, so creating only `root`
+        # left write_text raising FileNotFoundError on a store that had not
+        # written them yet -- which `compact` works around by calling
+        # shared_root.mkdir itself at each of the two call sites that needed it.
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text.strip() + "\n", encoding="utf-8")
 
     def read_memory(self) -> str:
