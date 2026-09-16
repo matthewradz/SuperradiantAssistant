@@ -107,7 +107,6 @@ def search_for_role(
     kind_prefs = {
         "planner":  ["manual", "sequence", "subsequence", "code_example"],
         "coder":    ["analysis", "class", "connection", "device", "code_example"],
-        "answer":   None,  # all kinds
     }
     preferred = kind_prefs.get(role)
     results = search(docs, query, top_k=top_k, kinds=preferred)

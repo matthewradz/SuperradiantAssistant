@@ -1,0 +1,6 @@
+[38;2;226;168;83m┌─ [38;2;226;168;83mSweep sine_frequency from 2000 Hz to 3000 Hz[38;2;226;168;83m ─────────────────────────────────────────────────┐[0m
+[38;2;226;168;83m│[0m [x] 1. Consult planner on current sequence and parameters -- Planner recommends filter_scan.py [38;2;226;168;83m│[0m
+[38;2;226;168;83m│[0m [>] 2. Delegate sweep execution to coder                                                       [38;2;226;168;83m│[0m
+[38;2;226;168;83m│[0m [ ] 3. Read back shot results and report to operator                                           [38;2;226;168;83m│[0m
+[38;2;226;168;83m│[0m (1/3 complete)                                                                                 [38;2;226;168;83m│[0m
+[38;2;226;168;83m└────────────────────────────────────────────────────────────────────────────────────────────────┘[0m

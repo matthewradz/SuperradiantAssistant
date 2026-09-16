@@ -20,6 +20,9 @@ class Stage(BaseModel):
     analysis_param_str: Optional[str] = None  # x-axis param for improved_cost_clean.py
     params_file: Optional[str] = None  # deprecated — use config.json globals instead
     max_iterations: int = 50
+    # Seconds to wait for a live sweep's shots to run and for lyse to analyse
+    # them before reporting whatever arrived. 0 skips the wait.
+    results_timeout: float = 300.0
     status: Literal["pending", "active", "complete", "failed"] = "pending"
     result: Optional[Dict[str, Any]] = None
     notes: str = ""
@@ -51,6 +54,12 @@ class Goal(BaseModel):
     max_tokens: int = 1_000_000
     timeout_seconds: int = 3600
     raw_prompt: str = ""
+    # Goal mode: keep re-planning and re-shooting until the threshold is met (or a
+    # limit is hit). Switched off, an optimize stage takes exactly one shot and
+    # reports whether the threshold was met, leaving the decision to iterate to the
+    # operator — much cheaper, since goal mode can burn many shots chasing a target.
+    # Sweep stages are unaffected: they queue all their points in one engage either way.
+    goal_mode: bool = True
 
     @property
     def current_stage(self) -> Optional[Stage]:

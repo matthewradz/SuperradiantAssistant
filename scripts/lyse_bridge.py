@@ -1,8 +1,13 @@
 """Subprocess bridge: talks to the running lyse GUI via its ZMQ WebServer."""
 import sys
 import json
+import os
+from pathlib import Path
 
-sys.path.insert(0, r'C:\Users\radzi\Documents\labscript-suite\labscript-suite\userlib')
+# labscript_utils lives in the suite's own environment, not the agent's. Set
+# LABSCRIPT_USERLIB when the suite is not at the default location.
+sys.path.insert(0, os.environ.get("LABSCRIPT_USERLIB")
+                or str(Path.home() / "labscript-suite" / "userlib"))
 
 from labscript_utils.ls_zprocess import ZMQClient
 from labscript_utils.labconfig import LabConfig

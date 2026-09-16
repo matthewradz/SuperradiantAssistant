@@ -1,0 +1,27 @@
+[38;2;222;170;90m┌─ [38;2;222;170;90mconfirm · write_shot[38;2;222;170;90m ─────────────────────────────────────────────────────────────────────────┐[0m
+[38;2;222;170;90m│[0m source here                                                                                    [38;2;222;170;90m│[0m
+[38;2;222;170;90m└────────────────────────────────────────────────────────────────────────────────────────────────┘[0m
+
+[38;2;108;114;130m┌─ [38;2;108;114;130mwhat already exists[38;2;108;114;130m ──────────────────────────────────────────────────────────────────────────┐[0m
+[38;2;108;114;130m│[0m 'x.py' ALREADY EXISTS in ...                                                                   [38;2;108;114;130m│[0m
+[38;2;108;114;130m└────────────────────────────────────────────────────────────────────────────────────────────────┘[0m
+
+[2K  [1m[38;2;208;213;224mAdd a new script, replace this one, or reuse?[22m[0m
+[2K  [38;2;226;168;83m> [1mnew[22m        [0m[38;2;208;213;224mwrite a dated new file: x_20260809.py[0m
+[2K    [38;2;108;114;130mreplace             replace x.py -- its 40 lines are lost[0m
+[2K    [38;2;108;114;130mreuse               do not write; use a script that exists[0m
+[2K    [38;2;108;114;130mcancel              do nothing; ask the operator[0m
+[2K  [38;2;108;114;130m↑↓ choose   [38;2;208;213;224menter[38;2;108;114;130m confirm[0m
+[6F[2K  [1m[38;2;208;213;224mAdd a new script, replace this one, or reuse?[22m[0m
+[2K    [38;2;108;114;130mnew                 write a dated new file: x_20260809.py[0m
+[2K  [38;2;226;168;83m> [1mreplace[22m    [0m[38;2;208;213;224mreplace x.py -- its 40 lines are lost[0m
+[2K    [38;2;108;114;130mreuse               do not write; use a script that exists[0m
+[2K    [38;2;108;114;130mcancel              do nothing; ask the operator[0m
+[2K  [38;2;108;114;130m↑↓ choose   [38;2;208;213;224menter[38;2;108;114;130m confirm[0m
+[6F[2K  [1m[38;2;208;213;224mAdd a new script, replace this one, or reuse?[22m[0m
+[2K    [38;2;108;114;130mnew                 write a dated new file: x_20260809.py[0m
+[2K    [38;2;108;114;130mreplace             replace x.py -- its 40 lines are lost[0m
+[2K  [38;2;226;168;83m> [1mreuse[22m      [0m[38;2;208;213;224mdo not write; use a script that exists[0m
+[2K    [38;2;108;114;130mcancel              do nothing; ask the operator[0m
+[2K  [38;2;108;114;130m↑↓ choose   [38;2;208;213;224menter[38;2;108;114;130m confirm[0m
+  [38;2;226;168;83m-> reuse[0m

@@ -1,9 +1,11 @@
 """Analysis script runner — edits and runs lyse analysis scripts after shots complete.
 
-For improved_cost_clean.py: edits parameter_str and y_op_string then runs it.
-For calibrate_larmor_frequency_clean.py: runs it and extracts the correction value.
+Reached only from `scripts/run_optimization.py`, the standalone driver that
+predates the agent team; nothing in the package imports it.
 """
 from __future__ import annotations
+import os
+import sys
 import re
 import subprocess
 import tempfile
@@ -11,9 +13,13 @@ import shutil
 from pathlib import Path
 from typing import Optional, Tuple
 
-_YBCLOCK_PYTHON = r"C:\Users\radzi\AppData\Local\Anaconda3\envs\ybclock_3_11_24\python.exe"
+#: The interpreter that can import lyse — the labscript suite's own environment,
+#: not the agent's. Set ANALYSIS_PYTHON to override; the default is whatever is
+#: running, which is wrong often enough to be worth setting explicitly.
+_ANALYSIS_PYTHON = os.environ.get("ANALYSIS_PYTHON") or sys.executable
 _LABSCRIPT_ROOT = Path(
-    r'C:\Users\radzi\Documents\labscript-suite\labscript-suite\userlib\labscriptlib\ybclock'
+    os.environ.get("ANALYSIS_LABSCRIPTLIB_ROOT")
+    or Path.home() / "labscript-suite" / "userlib" / "labscriptlib"
 )
 
 
@@ -66,22 +72,24 @@ def run_analysis_script(
     edits: Optional[dict] = None,
     timeout: int = 60,
 ) -> Tuple[bool, str]:
-    """Run an analysis script in the ybclock env and return (success, stdout)."""
-    import os
+    """Run an analysis script in the suite's own env and return (success, stdout)."""
     src = _LABSCRIPT_ROOT / script_rel_path
     if not src.exists():
         return False, f"Script not found: {src}"
 
     run_path = _edit_script(src, edits or {}) if edits else src
 
+    # A Qt-based routine needs its own environment's Library/bin on PATH and its
+    # plugin directory named, or it aborts on "could not find the Qt platform
+    # plugin". Both follow from wherever the interpreter lives.
     env = os.environ.copy()
-    _env_root = r"C:\Users\radzi\AppData\Local\Anaconda3\envs\ybclock_3_11_24"
-    env["PATH"] = f"{_env_root}\\Library\\bin;" + env.get("PATH", "")
-    env["QT_PLUGIN_PATH"] = f"{_env_root}\\Library\\plugins"
+    _env_root = Path(_ANALYSIS_PYTHON).parent
+    env["PATH"] = f"{_env_root / 'Library' / 'bin'};" + env.get("PATH", "")
+    env["QT_PLUGIN_PATH"] = str(_env_root / "Library" / "plugins")
 
     try:
         result = subprocess.run(
-            [_YBCLOCK_PYTHON, str(run_path)],
+            [_ANALYSIS_PYTHON, str(run_path)],
             capture_output=True, text=True, timeout=timeout, env=env
         )
         output = result.stdout + result.stderr
