@@ -11,7 +11,8 @@ from superradiant_assistant.safety import validate_writes
 
 _BRIDGE = Path(__file__).resolve().parents[2] / "scripts" / "runmanager_bridge.py"
 
-# ✅ 优先从环境变量读取，否则自动使用当前 Python 环境，避免硬编码路径报错
+# Prefer the environment variable, otherwise fall back to the current Python
+# environment, so a hard-coded path cannot break the import.
 _CONDA_ENV = os.environ.get("CONDA_PREFIX",
                             os.path.expanduser(r"~\anaconda3\envs\python38"))
 _YBCLOCK_PYTHON = os.path.join(_CONDA_ENV, "python.exe")
@@ -84,7 +85,7 @@ class RunmanagerInterface:
 
     def get_globals(self) -> Dict[str, Any]:
         res = _call("get_globals")
-        # 增加一个 Debug 打印，可以在终端清楚看到 bridge 到底拿到了什么
+        # Debug print, to see in the terminal exactly what the bridge returned.
         # print(f"[DEBUG Bridge Raw Globals]: {res}") 
         return res or {}
 

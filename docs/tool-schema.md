@@ -1,333 +1,326 @@
-# Tool Schema — labscript agent 的统一接口
+# Tool Schema — the unified interface for the labscript agent
 
-这是把 labscript 包装成 Claude Agent 工具层的设计文档。每个字段都对应现有代码里的真实签名，没有凭空设计的东西。
+This is the design document for wrapping labscript as a Claude Agent tool layer. Every field corresponds to a real signature in the existing code. Nothing here was designed in the abstract.
 
-**这份文档是后续所有步骤的输入**：subagent 的 `tools` 白名单、hook 的 `matcher`、goal 模式的判定条件、SKILL.md 的内容边界，全部从这里派生。
+**This document is the input to every step that follows**: the `tools` whitelist for each subagent, the `matcher` for each hook, the conditions that decide goal mode, and the content boundaries of SKILL.md all derive from it.
 
-> **读之前先知道**：这是**最初的设计记录**，不是当前状态的清单。实现已经从这里
-> 列的 8 个工具长到 35 个，团队也从 `主 agent / planner / coder / answer` 变成了
-> `lead / planner / coder / advisor`。角色名和 §5 的权限矩阵已按实现校对过；
-> **§1 的参数、指标、序列文件枚举没有**——那些是当初那台装置（ybclock 171-Yb 腔）
-> 的 `config.json`，本 checkout 已不再附带，只作为"枚举从配置生成"这条原则的
-> 示例来读，不要当成你这台装置有什么。
+> **Read this first**: this is the **original design record**, not an inventory of the current state. The implementation has grown from the 8 tools listed here to 35, and the team has changed from `main agent / planner / coder / answer` to `lead / planner / coder / advisor`. The role names and the permission matrix in §5 have been reconciled against the implementation.
+> **The parameters, metrics, and sequence files enumerated in §1 have not been.** Those came from the `config.json` of one particular apparatus (the ybclock 171-Yb cavity), which this checkout no longer ships. Read them only as an illustration of the principle "enumerations are generated from configuration." Do not read them as a description of your apparatus.
 >
-> 权威始终是运行中的系统：参数看你自己的 `config.json`，工具权限敲 `/team`。
+> The running system is always the authority: for parameters, look at your own `config.json`, and for tool permissions, type `/team`.
 
 ---
 
-## 0. 三条设计原则
+## 0. Three design principles
 
-**原则 1：模型选工具，代码定参数。**
-模型能决定"跑一次优化，目标 Neta_2 > 700"，但**不能**决定"这一炮 z_bias 设 -0.103"。后者由 `HillClimbOptimizer` 算，因为它必须可复现。对照图 (a)：Execute 是灰色的 non-AI 步骤，`run_loop` 属于灰色区。
+**Principle 1: the model picks tools, the code picks parameters.**
+The model can decide "run an optimization, target Neta_2 > 700." It **cannot** decide "set z_bias to -0.103 on this shot." That is computed by `HillClimbOptimizer`, because it has to be reproducible. Compare figure (a): Execute is the grey non-AI step, and `run_loop` belongs to the grey region.
 
-**原则 2：枚举来自 `config.json`，不来自提示词。**
-所有参数名、序列文件、分析脚本的合法取值都从 `config.json` 在启动时读出来生成 enum。模型不可能提出一个不在白名单里的参数名——因为 schema 里没有。
+**Principle 2: enumerations come from `config.json`, not from the prompt.**
+Every legal value for a parameter name, sequence file, or analysis script is read out of `config.json` at startup and turned into an enum. The model cannot propose a parameter name that is not on the whitelist, because the schema does not contain one.
 
-**原则 3：schema 约束 ≠ 安全边界。**
-模型仍然可以往 `value` 里填一个超范围的数。**真正的强制在工具函数体内的校验**（对着 `config.json` 的 min/max）和 PreToolUse hook。schema 只是让非法输入变得困难，不是让它变得不可能。
+**Principle 3: a schema constraint is not a security boundary.**
+The model can still put an out-of-range number in `value`. **The real enforcement lives in the validation inside the tool function body** (checked against the min/max in `config.json`) and in the PreToolUse hook. The schema makes illegal input difficult, not impossible.
 
 ---
 
-## 1. 枚举来源（启动时从 config.json 生成）
+## 1. Where the enumerations come from (generated from config.json at startup)
 
-### 1.1 可调参数（`min`/`max` 都非 null，共 6 个）
+### 1.1 Tunable parameters (both `min` and `max` non-null, 6 total)
 
-`run_optimization` 的搜索空间。来自 `loop.py:35-47` 的筛选逻辑：`min`/`max` 都存在才会变成 `ParamSpec`。
+The search space for `run_optimization`. Produced by the filter at `loop.py:35-47`: a parameter becomes a `ParamSpec` only if both `min` and `max` are present.
 
-| 参数名 | min | max | 类型 | 物理含义 |
+| Parameter | min | max | Type | Physical meaning |
 |---|---|---|---|---|
-| `z_bias_field_loading` | -0.110 | -0.090 | float | 装载时 Z 向偏置场 |
-| `y_bias_field_loading` | 0.0 | 0.5 | float | 装载时 Y 向偏置场 |
-| `green_mot_frequency` | 47.5 | 49.5 | float | 绿光 MOT 交接频率 (MHz) |
-| `lattice_loading_frequency` | 48.0 | 50.0 | float | 绿光晶格交接频率 (MHz) |
-| `calibration_precession_time` | 0.1 | 20.0 | float | Ramsey 等待时间 (ms) |
-| `rf_larmor_frequency` | 10000 | 11000 | float | Larmor 频率 (Hz) |
+| `z_bias_field_loading` | -0.110 | -0.090 | float | Z bias field during loading |
+| `y_bias_field_loading` | 0.0 | 0.5 | float | Y bias field during loading |
+| `green_mot_frequency` | 47.5 | 49.5 | float | Green MOT handoff frequency (MHz) |
+| `lattice_loading_frequency` | 48.0 | 50.0 | float | Green lattice handoff frequency (MHz) |
+| `calibration_precession_time` | 0.1 | 20.0 | float | Ramsey wait time (ms) |
+| `rf_larmor_frequency` | 10000 | 11000 | float | Larmor frequency (Hz) |
 
-### 1.2 不可自动调节的参数（`min`/`max` 为 null，共 2 个）
+### 1.2 Parameters that cannot be tuned automatically (`min`/`max` null, 2 total)
 
-**这两个不进 `run_optimization` 的搜索空间**，只能被 `run_sweep` 或 `set_runmanager_global` 显式指定。
+**These two do not enter the `run_optimization` search space.** They can only be set explicitly, by `run_sweep` or `set_runmanager_global`.
 
-| 参数名 | 类型 | 为什么没有范围 |
+| Parameter | Type | Why it has no range |
 |---|---|---|
-| `TD_loading` | bool | 布尔量，无区间概念 |
-| `clock_pi_resonance_frequency_list` | float[] | 每炮一个值的列表，扫描专用 |
+| `TD_loading` | bool | Boolean, an interval means nothing |
+| `clock_pi_resonance_frequency_list` | float[] | A list with one value per shot, used only for sweeps |
 
-### 1.3 指标（来自 `signals.py` 的 `ShotSignal` 字段）
+### 1.3 Metrics (the `ShotSignal` fields in `signals.py`)
 
 `Neta_1` `Neta_2` `Neta_3` `Neta_4` `Neta_5` `chi_square_2` `r_sq_2`
 
-### 1.4 序列文件（`config.json` → `sequences`）
+### 1.4 Sequence files (`config.json` -> `sequences`)
 
-| 文件 | use_case |
+| File | use_case |
 |---|---|
 | `sequences/assistant_sequences/calibrate_larmor_frequency_clean.py` | calibrate |
 | `sequences/assistant_sequences/clock_transition_RABI.py` | resonance |
 
-### 1.5 分析脚本（`config.json` → `analysis_scripts`）
+### 1.5 Analysis scripts (`config.json` -> `analysis_scripts`)
 
-| 文件 | use_case |
+| File | use_case |
 |---|---|
 | `analysis/scripts/meta/improved_cost_clean.py` | resonance, optimize |
 | `analysis/scripts/meta/calibrate_larmor_frequency_clean.py` | calibrate |
 
 ---
 
-## 2. 七个工具
+## 2. The eight tools
 
-风险等级说明：
-- 🟢 **只读** — 无副作用，不需要 hook
-- 🟡 **计算** — 会写文件（图片），但不碰硬件
-- 🔴 **改变外部状态** — 排队实验 / 改硬件参数 / 改源码，**必须走 PreToolUse 确认门 + 审计**
+Risk levels:
+- 🟢 **Read-only** — no side effects, no hook needed
+- 🟡 **Computation** — writes files (images), but does not touch hardware
+- 🔴 **Changes external state** — queues experiments, changes hardware parameters, or edits source. **Must pass a PreToolUse confirmation gate and be audited.**
 
 ---
 
 ### 🟢 T1. `search_lab_knowledge`
 
-检索实验室文档和序列代码。对应图 (b) 的 Search Agent（当前是关键词版）。
+Retrieves lab documents and sequence code. This is the Search Agent in figure (b), currently a keyword implementation.
 
 ```python
 {
-  "query": str,                          # 自然语言查询
-  "role": "planner" | "coder" | "advisor", # 影响文档类型偏好
-  "top_k": int,                          # 1-10，默认 6
+  "query": str,                            # natural-language query
+  "role": "planner" | "coder" | "advisor", # biases which document kinds are preferred
+  "top_k": int,                            # 1-10, default 6
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | `search_for_role(knowledge, query, role, top_k)` + `augment_with_function_excerpts(docs, query)` |
-| 校验 | `top_k` 钳位到 [1, 10]，防止一次塞爆上下文 |
-| 返回 | 每篇文档的 title / kind / 摘要 + 命中函数的正文片段 |
+| Wraps | `search_for_role(knowledge, query, role, top_k)` plus `augment_with_function_excerpts(docs, query)` |
+| Validation | `top_k` is clamped to [1, 10], so one call cannot blow out the context |
+| Returns | title / kind / summary for each document, plus body excerpts of matching functions |
 | signal | `"found {n} docs: {titles}"` |
-| 谁能用 | lead, planner, coder, advisor |
+| Available to | lead, planner, coder, advisor |
 
-> **当前局限**：纯关键词打分（title/summary/tags 权重 ×3）。图 (b) 的 vectorize + cosine similarity + Remove 去重都没有。3 篇手写文档下够用，文档变多后再升级。
+> **Current limitation**: pure keyword scoring (title/summary/tags weighted x3). None of the vectorize, cosine similarity, or Remove-for-deduplication steps from figure (b) exist. That is sufficient for three handwritten documents. Revisit it once there are more.
 
 ---
 
 ### 🟢 T2. `load_skill`
 
-按需加载某个实验流程的 SOP。对应图 (a) 的 Knowledge → Documents，也就是 step06 学的技能加载。
+Loads the SOP for one experimental procedure on demand. This is Knowledge -> Documents in figure (a), the skill loading taught in step06.
 
 ```python
 {
-  "skill_name": <enum，启动时扫 skills/*/SKILL.md 生成>,
+  "skill_name": <enum, generated at startup by scanning skills/*/SKILL.md>,
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | 自写 `SkillLoader`（仿 step12 第53-95行），**不依赖 SDK 的技能发现机制** |
-| 校验 | `skill_name` 必须在启动时扫出的名单里 |
-| 返回 | `<skill name="...">` 包裹的 SKILL.md 正文 |
+| Wraps | A hand-written `SkillLoader` (modeled on step12 lines 53-95). **It does not depend on the SDK's skill discovery mechanism.** |
+| Validation | `skill_name` must appear in the list scanned at startup |
+| Returns | The body of SKILL.md, wrapped in `<skill name="...">` |
 | signal | `"loaded skill: {name}"` |
-| 谁能用 | lead, planner, coder, advisor |
+| Available to | lead, planner, coder, advisor |
 
 ---
 
 ### 🟢 T3. `read_shot_results`
 
-读 HDF5 实验数据摘要。
+Reads a summary of HDF5 experimental data.
 
 ```python
 {
-  "limit": int,                  # 1-200，默认 20，从最新往回读
-  "metrics": [<指标 enum>],       # 要哪些指标，默认全部
-  "include_globals": bool,       # 是否附带参数快照，默认 False
+  "limit": int,              # 1-200, default 20, counting back from the most recent
+  "metrics": [<metric enum>], # which metrics to return, default all
+  "include_globals": bool,    # attach a parameter snapshot, default False
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | `list_shots(root)` + `read_shot(path)` |
-| **路径来源** | **固定为 `CONFIG.historical_data_root`，不接受模型传入路径** |
-| 校验 | `limit` 钳位；`include_globals=True` 时只返回白名单内的参数名 |
-| 返回 | 表格：shot_id + 各指标值 |
+| Wraps | `list_shots(root)` plus `read_shot(path)` |
+| **Path source** | **Fixed to `CONFIG.historical_data_root`. A path from the model is not accepted.** |
+| Validation | `limit` is clamped. With `include_globals=True`, only whitelisted parameter names are returned |
+| Returns | A table of shot_id plus each metric value |
 | signal | `"read {n} shots, best {metric}={value}"` |
-| 谁能用 | lead, planner, coder, advisor |
+| Available to | lead, planner, coder, advisor |
 
-> ⚠️ **不要让模型传 folder 路径**。这是路径穿越的入口。数据根目录由 `config.json` 定，工具只在其内部工作。
+> ⚠️ **Never let the model pass a folder path.** That is the entry point for path traversal. The data root is set by `config.json`, and the tool works only inside it.
 
 ---
 
 ### 🟡 T4. `analyze_results`
 
-跑拟合分析并产出物理结论。
+Runs a fit and produces a physical conclusion.
 
 ```python
 {
   "analysis_type": "resonance" | "calibration",
-  "sweep_param": <可调参数 enum | null>,    # resonance 必填
-  "plot_ratio": str | null,                # 如 "Neta_5/Neta_4"，resonance 必填
+  "sweep_param": <tunable parameter enum | null>,  # required for resonance
+  "plot_ratio": str | null,                        # e.g. "Neta_5/Neta_4", required for resonance
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | `analyze_resonance_sweep(data_root, sweep_param, plot_ratio)` / `analyze_larmor_calibration(data_root)` |
-| 算法 | `scipy.optimize.curve_fit`（Levenberg–Marquardt）拟合洛伦兹凹陷 / Ramsey 条纹 |
-| 校验 | `analysis_type=="resonance"` 时 `sweep_param` 和 `plot_ratio` 必须都非空；`plot_ratio` 必须形如 `A/B` 且 A、B 都是合法指标名 |
-| 副作用 | 写一张 png（`plot_path`） |
-| 返回 | 拟合参数 + 是否找到 + plot 路径 |
+| Wraps | `analyze_resonance_sweep(data_root, sweep_param, plot_ratio)` / `analyze_larmor_calibration(data_root)` |
+| Algorithm | `scipy.optimize.curve_fit` (Levenberg-Marquardt) fitting a Lorentzian dip or Ramsey fringes |
+| Validation | When `analysis_type=="resonance"`, both `sweep_param` and `plot_ratio` must be non-null. `plot_ratio` must have the form `A/B` with A and B both legal metric names |
+| Side effect | Writes one png (`plot_path`) |
+| Returns | Fit parameters, whether a feature was found, and the plot path |
 | signal | resonance: `"resonance at {f:.6f} MHz, linewidth {lw:.0f} Hz, min ratio {r:.3f}"`<br>calibration: `"correction {c:+.2f} Hz, fit freq {f:.1f} Hz"` |
-| 谁能用 | lead, planner, coder, advisor |
+| Available to | lead, planner, coder, advisor |
 
 ---
 
 ### 🟢/🔴 T5. `get_runmanager_globals`
 
-读当前硬件参数。
+Reads the current hardware parameters.
 
 ```python
 {
-  "names": [<全部参数 enum>] | null,   # null = 全部
+  "names": [<all-parameters enum>] | null,  # null = all
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | `RunmanagerInterface().get_globals()` |
-| 前置 | **需要 labscript GUI 在运行**（走 conda bridge 子进程）；离线模式下应返回明确错误而非崩溃 |
-| 校验 | 返回值过滤，只暴露 `config.json` 白名单内的参数 |
-| 风险 | 🟢 只读，但会起子进程。**不要在离线模式下暴露这个工具** |
+| Wraps | `RunmanagerInterface().get_globals()` |
+| Precondition | **The labscript GUI must be running** (this goes through a conda bridge subprocess). In offline mode it should return a clear error rather than crash |
+| Validation | The return value is filtered, exposing only parameters on the `config.json` whitelist |
+| Risk | 🟢 Read-only, but it spawns a subprocess. **Do not expose this tool in offline mode.** |
 | signal | `"read {n} globals"` |
-| 谁能用 | lead, planner, coder, advisor |
+| Available to | lead, planner, coder, advisor |
 
 ---
 
 ### 🔴 T6. `run_optimization`
 
-跑一次参数优化循环。**这是 `run_loop` 的唯一入口。**
+Runs one parameter optimization loop. **This is the only entry point to `run_loop`.**
 
 ```python
 {
-  "target_metric": <指标 enum>,
+  "target_metric": <metric enum>,
   "threshold": float,
   "threshold_op": ">" | ">=" | "<" | "<=" | "==",
   "max_iterations": int,                    # 1-50
-  "sequence_file": <序列 enum>,
-  "signal_spec": str,                       # ← 图 (d)：Plan 指定要报告什么
-  "reason": str,                            # ← 审计用，必填
+  "sequence_file": <sequence enum>,
+  "signal_spec": str,                       # figure (d): Plan states what to report
+  "reason": str,                            # required, for the audit log
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | 构造 `Stage(task_type="optimize", stage_kind="optimize", ...)` + `Goal` → `run_loop(...)` |
-| 参数由谁定 | **`HillClimbOptimizer`**，搜索空间是 §1.1 那 6 个参数。模型不参与选值 |
-| 校验 | `max_iterations` ≤ min(50, 语料库剩余 shot 数)；`threshold` 必须是有限数；`sequence_file` 在白名单内 |
-| 风险 | live 模式下会往 BLACS 排队真实实验 → **PreToolUse 确认门 + 审计** |
-| 返回 | `run_loop` 的 summary + 按 `signal_spec` 格式化的 signal |
-| signal | 例：`"target_met at iter 4 | best Neta_2=716.7 | 4 shots used"` |
-| 谁能用 | lead, coder |
+| Wraps | Builds a `Stage(task_type="optimize", stage_kind="optimize", ...)` plus a `Goal`, then calls `run_loop(...)` |
+| Who picks the values | **`HillClimbOptimizer`.** The search space is the 6 parameters in §1.1. The model takes no part in choosing values |
+| Validation | `max_iterations` <= min(50, shots remaining in the corpus). `threshold` must be finite. `sequence_file` must be on the whitelist |
+| Risk | In live mode this queues real experiments to BLACS, so it needs a **PreToolUse confirmation gate and an audit record** |
+| Returns | The `run_loop` summary plus a signal formatted per `signal_spec` |
+| signal | e.g. `"target_met at iter 4 | best Neta_2=716.7 | 4 shots used"` |
+| Available to | lead, coder |
 
-**关键设计**：`signal_spec` 是图 (d) 的落地点。Plan 阶段决定"我要看到什么"，工具保证产出它，PostToolUse hook 把它写进 history，下一轮 Plan 读到它。这补上了现在 `signal_description` 生成后被丢弃的缺口。
+**Key design point**: `signal_spec` is where figure (d) becomes real. The Plan stage decides what it wants to see, the tool guarantees it is produced, the PostToolUse hook writes it into history, and the next Plan reads it back. This closes the gap where `signal_description` is currently generated and then discarded.
 
 ---
 
 ### 🔴 T7. `run_sweep`
 
-扫描一个参数并一次性排队到 BLACS。
+Sweeps one parameter, queueing the whole set to BLACS at once.
 
 ```python
 {
-  "sweep_param": <全部参数 enum>,
+  "sweep_param": <all-parameters enum>,
   "mode": "centered" | "explicit",
-  # mode == "centered"（频率扫描，以 runmanager 当前值为中心）
+  # mode == "centered" (frequency sweep, centered on runmanager's current value)
   "range_mhz": float | null,
   "step_mhz": float | null,
-  # mode == "explicit"（显式起止，任意单位）
+  # mode == "explicit" (explicit endpoints, any units)
   "start": float | null,
   "end": float | null,
   "n_points": int,                    # 2-101
   "plot_ratio": str | null,
-  "sequence_file": <序列 enum>,
+  "sequence_file": <sequence enum>,
   "signal_spec": str,
   "reason": str,
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | 构造 `Stage(stage_kind="sweep", ...)` → `run_loop` 内部选用 `DeterministicSweepCoder` |
-| 机制 | 生成 `np.linspace(start, end, n)` 表达式一次性写入 runmanager，**它自动排 n 炮**（`sweep_coder.py:80-81`）。循环只跑 1 轮就退出（docstring 第7行） |
-| 副作用 | 会把 `delta_duration` 加 0.1 作为本组扫描的唯一标识（`sweep_coder.py:83-91`） |
-| 校验 | `mode=="centered"` 需要 `range_mhz` 和 `step_mhz` 都非空且 `step_mhz > 0`；`mode=="explicit"` 需要 `start != end`；算出的点数必须 ≥ 2；`sweep_param` 若以 `_list` 结尾，基准参数（去掉 `_list`）必须能从 runmanager 读到 |
-| 风险 | 🔴 **一次排 n 炮真实实验** → PreToolUse 确认门必须列出 start/end/n 让人确认 + 审计 |
+| Wraps | Builds a `Stage(stage_kind="sweep", ...)`, and `run_loop` then selects `DeterministicSweepCoder` internally |
+| Mechanism | Writes an `np.linspace(start, end, n)` expression into runmanager in one go, and **runmanager queues n shots by itself** (`sweep_coder.py:80-81`). The loop runs exactly one iteration and exits (docstring line 7) |
+| Side effect | Adds 0.1 to `delta_duration` as the unique identifier for this sweep group (`sweep_coder.py:83-91`) |
+| Validation | `mode=="centered"` requires `range_mhz` and `step_mhz` both non-null with `step_mhz > 0`. `mode=="explicit"` requires `start != end`. The resulting point count must be >= 2. If `sweep_param` ends in `_list`, the base parameter (the name without `_list`) must be readable from runmanager |
+| Risk | 🔴 **Queues n real experiments in one action.** The PreToolUse gate must show start, end, and n for confirmation, and the action must be audited |
 | signal | `"queued {n} shots: {param} from {start} to {end}"` |
-| 谁能用 | lead, coder |
+| Available to | lead, coder |
 
 ---
 
 ### 🔴🔴 T8. `set_runmanager_global`
 
-**风险最高的一个**。往真实硬件参数里写值。
+**The highest-risk tool.** It writes a value into a real hardware parameter.
 
 ```python
 {
-  "name": <全部参数 enum>,
+  "name": <all-parameters enum>,
   "value": float | bool,
-  "reason": str,          # 必填，写进审计日志
+  "reason": str,          # required, written to the audit log
 }
 ```
 
-| 项 | 内容 |
+| Item | Detail |
 |---|---|
-| 包装 | `RunmanagerInterface().set_globals({name: value})` |
-| **校验（代码层，不可绕过）** | 1. `name` 必须在 `config.json` 的 `globals` 里<br>2. 若该参数有 `min`/`max`，`value` 必须落在闭区间内<br>3. 若 `min`/`max` 为 null（`TD_loading` / `..._list`），**默认拒绝**，除非在单独的显式允许清单里<br>4. 类型必须匹配（`TD_loading` 只接受 bool） |
-| PreToolUse hook | **总是要人工确认**，无论什么 permission_mode。确认提示必须显示：参数名、当前值、新值、允许区间、reason |
-| PostToolUse hook | **必须审计**：时间戳、参数、旧值、新值、reason、session_id |
-| 风险 | 🔴🔴 直接改变物理装置状态 |
+| Wraps | `RunmanagerInterface().set_globals({name: value})` |
+| **Validation (in code, not bypassable)** | 1. `name` must appear in the `globals` block of `config.json`<br>2. If the parameter has a `min`/`max`, `value` must fall inside the closed interval<br>3. If `min`/`max` are null (`TD_loading`, any `..._list`), the write is **refused by default** unless the parameter is on a separate explicit allow list<br>4. The type must match (`TD_loading` accepts only a bool) |
+| PreToolUse hook | **Always requires human confirmation**, in every permission_mode. The prompt must show the parameter name, the current value, the new value, the permitted interval, and the reason |
+| PostToolUse hook | **Must be audited**: timestamp, parameter, old value, new value, reason, session_id |
+| Risk | 🔴🔴 Directly changes the state of the physical apparatus |
 | signal | `"{name}: {old} -> {new} Hz"` |
-| 谁能用 | **只有 lead**（planner / coder / advisor 全都不给） |
+| Available to | **lead only** (not planner, coder, or advisor) |
 
-> 这个工具替代的是现在 `run_optimization.py` 第338-343行那段——裸 `input()` 确认、无审计、异常只打印。那是全项目最该补 hook 的地方。
+> This tool replaces the block at `run_optimization.py` lines 338-343: a bare `input()` confirmation, no audit, and exceptions only printed. That is the single place in the project most in need of a hook.
 
 ---
 
-## 3. 校验总表
+## 3. Validation summary
 
-| 工具 | 代码层强制校验 | PreToolUse | 审计 |
+| Tool | Enforced in code | PreToolUse | Audit |
 |---|---|---|---|
-| T1 `search_lab_knowledge` | top_k 钳位 | — | — |
-| T2 `load_skill` | 名单内 | — | — |
-| T3 `read_shot_results` | 路径固定、limit 钳位 | — | — |
-| T4 `analyze_results` | 必填字段组合、plot_ratio 格式 | — | ✓ |
-| T5 `get_runmanager_globals` | 返回值白名单过滤 | — | ✓ |
-| T6 `run_optimization` | 迭代上限、阈值有限、序列白名单 | ✓ 确认 | ✓ |
-| T7 `run_sweep` | 点数 ≥2、step>0、基准参数存在 | ✓ 确认（列出 n 炮） | ✓ |
-| T8 `set_runmanager_global` | 名单 + 区间 + 类型 + null 拒绝 | ✓ **强制确认** | ✓ **必须** |
+| T1 `search_lab_knowledge` | top_k clamped | — | — |
+| T2 `load_skill` | name on the list | — | — |
+| T3 `read_shot_results` | path fixed, limit clamped | — | — |
+| T4 `analyze_results` | required field combinations, plot_ratio format | — | ✓ |
+| T5 `get_runmanager_globals` | return value filtered to whitelist | — | ✓ |
+| T6 `run_optimization` | iteration cap, threshold finite, sequence whitelisted | ✓ confirm | ✓ |
+| T7 `run_sweep` | n >= 2, step > 0, base parameter exists | ✓ confirm (lists n shots) | ✓ |
+| T8 `set_runmanager_global` | whitelist + interval + type + refuse-on-null | ✓ **mandatory confirm** | ✓ **required** |
 
 ---
 
-## 4. Signal 格式约定
+## 4. Signal format convention
 
-统一形状：`"<结论> | <关键数字> | <代价>"`
+One shape throughout: `"<conclusion> | <key numbers> | <cost>"`
 
 ```
 target_met at iter 4 | best Neta_2=716.7 | 4 shots used
 resonance at 100.014 MHz | linewidth 152 Hz | min ratio 0.243
 correction +2.34 Hz | fit freq 102.3 Hz | 21 shots
-queued 81 shots | clock_pi_..._list 99.0→101.0 | delta=1.6
+queued 81 shots | clock_pi_..._list 99.0->101.0 | delta=1.6
 no dip found | min ratio 0.981 | widen the sweep
 ```
 
-规则：
-1. **一行，不超过 120 字符** — 它会被反复注入 Plan 的上下文
-2. **必须含数字** — "效果不错"不是 signal
-3. **失败也要有 signal** — `"executor_error: No more historical shots"` 比空字符串有用
-4. 由**工具函数**生成，不由模型生成 — 模型只通过 `signal_spec` 表达"我想看什么"
+Rules:
+1. **One line, at most 120 characters.** It gets injected into the Plan context over and over
+2. **It must contain numbers.** "Looks good" is not a signal
+3. **Failures need a signal too.** `"executor_error: No more historical shots"` is more useful than an empty string
+4. It is produced by the **tool function**, not by the model. The model expresses what it wants to see only through `signal_spec`
 
 ---
 
-## 5. 工具 × Agent 权限矩阵
+## 5. Tool x agent permission matrix
 
-这一节记的是最初那 8 个工具。实际实现已经长到 **35 个**，分配是
-lead 24 / coder 20 / advisor 17 / planner 12。**权威是运行中的注册表本身**：
-会话里敲 `/team`，或者
-`build_registry(...).names_for("<角色>")`。下表只作为设计意图的记录。
+This section records the original 8 tools. The implementation has since grown to **35**, allocated as lead 24 / coder 20 / advisor 17 / planner 12. **The running registry is the authority**: type `/team` in a session, or call `build_registry(...).names_for("<role>")`. The table below is a record of design intent only.
 
-| 工具 | lead | planner | coder | advisor |
+| Tool | lead | planner | coder | advisor |
 |---|---|---|---|---|
 | T1 search_lab_knowledge | ✓ | ✓ | ✓ | ✓ |
 | T2 load_skill | ✓ | ✓ | ✓ | ✓ |
@@ -338,25 +331,19 @@ lead 24 / coder 20 / advisor 17 / planner 12。**权威是运行中的注册表�
 | T7 run_sweep | ✓ | — | ✓ | — |
 | T8 set_runmanager_global | ✓ | — | — | — |
 
-**`advisor` 拿不到任何会动硬件、也不会写任何持久状态的工具**——这是**硬约束**，
-不是建议：`ToolSpec.allowed_agents` 是白名单，而 `registry.dispatch()` 在调用
-handler 之前就会按它拒绝，所以即使模型被诱导去调用，那条路径**物理上无法**触发
-实验。这实现了之前讨论的"先答 query 再跑 command"的安全性。
+**`advisor` gets no tool that can move hardware and no tool that writes persistent state.** This is a **hard constraint, not a recommendation**: `ToolSpec.allowed_agents` is a whitelist, and `registry.dispatch()` refuses against it before the handler is ever called, so even a model that has been talked into calling one **physically cannot** reach the experiment along that path. This is what makes the "answer the query before running the command" behavior discussed earlier safe.
 
-具体地，`advisor` 完全没有:
-`run_sweep`、`run_optimization`、`engage_shot`、`set_runmanager_global`、
-`load_sequence`、`set_lyse_routines`、`remember`，以及 creative 模式的全部写入
-工具(`write_shot`、`write_analysis`、`write_report`、`propose_global`)。
-`tests/test_lab_tools.py::TestPermissionMatrix` 逐一守这条。
+Concretely, `advisor` has none of:
+`run_sweep`, `run_optimization`, `engage_shot`, `set_runmanager_global`, `load_sequence`, `set_lyse_routines`, `remember`, or any of the creative-mode write tools (`write_shot`, `write_analysis`, `write_report`, `propose_global`).
+`tests/test_lab_tools.py::TestPermissionMatrix` guards each one.
 
-三个只读工具(T3/T4/T5)后来对所有角色开放：诊断需要读得到数据，而它们不改变
-任何东西。原表把它们对某些角色标为 `—`，与实现不符。
+The three read-only tools (T3/T4/T5) were later opened to every role: diagnosis needs to be able to read data, and they change nothing. The original table marked them `—` for some roles, which does not match the implementation.
 
 ---
 
-## 6. 待确认的问题
+## 6. Open questions
 
-1. **合规**：走 Anthropic 官方 API 还是留在 MIT Parley？（阻塞项）
-2. **T5/T8 的离线行为**：labscript 没开时应该报错还是返回 mock？建议报错——静默 mock 会让人以为改成功了。
-3. **`clock_pi_resonance_frequency_list` 的写入**：它是 `..._list` 后缀参数，T8 默认拒绝。扫描后要不要自动重置回标量？（`loop.py:222-231` 现在会做这件事，要保留吗）
-4. **语料库耗尽**：`OfflineReplayExecutor` 不放回抽样，60 炮用完就报错。T6 的 `max_iterations` 上限要不要动态读剩余数量？
+1. **Compliance**: go through the official Anthropic API, or stay on MIT Parley? (blocking)
+2. **Offline behavior of T5/T8**: when labscript is not running, should these raise or return a mock? Raising is recommended, since a silent mock makes people believe a write succeeded.
+3. **Writing `clock_pi_resonance_frequency_list`**: it is a `..._list` parameter, so T8 refuses it by default. Should it be reset to a scalar automatically after a sweep? (`loop.py:222-231` does this today. Keep it?)
+4. **Corpus exhaustion**: `OfflineReplayExecutor` samples without replacement and raises once its 60 shots are used. Should the `max_iterations` cap in T6 read the remaining count dynamically?
