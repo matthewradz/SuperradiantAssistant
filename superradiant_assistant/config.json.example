@@ -1,0 +1,10 @@
+{
+  "GEMINI_API_KEY": "your-gemini-api-key-here",
+  "HISTORICAL_DATA_PATH": "C:/path/to/your/hdf5/data",
+  "LABSCRIPT_SUITE_PATH": "C:/path/to/labscript-suite/labscript-suite",
+  "MOCK_MODE": true,
+  "MAX_DOLLARS_PER_RUN": 100.0,
+  "MAX_TOKENS_PER_RUN": 1000000,
+  "DEFAULT_PARAMS_FILE": "examples/params.txt",
+  "EXEC_IMPORT": "import numpy as np\nimport h5py\nimport pandas as pd\nimport matplotlib.pyplot as plt\n"
+}

@@ -1,0 +1,49 @@
+{
+  "GEMINI_API_KEY": "your-gemini-api-key-here",
+  "MEMORY_DATA_PATH": "C:/Users/radzi/Documents/data_2026_05_18",
+  "EXEC_IMPORT": "import time, os, sys, json, yaml, scipy\nimport numpy as np\nimport matplotlib.pyplot as plt\n",
+
+  "sequences": [
+    {
+      "file": "sequences/assistant_sequences/calibrate_larmor_frequency_clean.py",
+      "description": "Ramsey sequence for Larmor frequency calibration.",
+      "use_case": "calibrate",
+      "key_globals": ["rf_larmor_frequency", "calibration_precession_time"]
+    },
+    {
+      "file": "sequences/assistant_sequences/clock_transition_RABI.py",
+      "description": "Rabi sequence for clock resonance finding.",
+      "use_case": "resonance",
+      "key_globals": ["clock_pi_resonance_frequency_list"]
+    }
+  ],
+
+  "analysis_scripts": [
+    {
+      "file": "analysis/scripts/meta/improved_cost_clean.py",
+      "description": "General sweep plotting. Set parameter_str and y_op_string.",
+      "editable_fields": {
+        "parameter_str": "x-axis global name",
+        "y_op_string": "y-axis expression e.g. 'Neta_5/Neta_4'"
+      },
+      "use_case": ["resonance", "optimize"]
+    },
+    {
+      "file": "analysis/scripts/meta/calibrate_larmor_frequency_clean.py",
+      "description": "Larmor calibration fit and correction.",
+      "editable_fields": {},
+      "use_case": ["calibrate"]
+    }
+  ],
+
+  "globals": [
+    {"name": "z_bias_field_loading",        "min": -0.110, "max": -0.090, "type": "float", "description": "Z-axis bias field during loading."},
+    {"name": "y_bias_field_loading",        "min": 0.0,    "max": 0.5,    "type": "float", "description": "Y-axis bias field during loading."},
+    {"name": "green_mot_frequency",         "min": 47.5,   "max": 49.5,   "type": "float", "description": "Green MOT frequency on handoff to cavity (MHz)."},
+    {"name": "lattice_loading_frequency",   "min": 48.0,   "max": 50.0,   "type": "float", "description": "Green lattice frequency on handoff (MHz)."},
+    {"name": "TD_loading",                  "min": null,   "max": null,   "type": "bool",  "description": "True = 2D transverse loading; False = standard."},
+    {"name": "calibration_precession_time", "min": 0.1,    "max": 20.0,   "type": "float", "description": "Ramsey wait time for Larmor calibration (ms)."},
+    {"name": "rf_larmor_frequency",         "min": 10000,  "max": 11000,  "type": "float", "description": "Larmor frequency (Hz); add correction after calibration."},
+    {"name": "clock_pi_resonance_frequency_list", "min": null, "max": null, "type": "float", "description": "Clock light frequency per shot (MHz); sweep ± 1 MHz around clock_pi_resonance_frequency."}
+  ]
+}
